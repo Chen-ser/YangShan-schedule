@@ -5,7 +5,9 @@
 // 嵌了一段 react-app.embeddedData 的 JSON，够定位到具体哪一步红了。
 //
 // 跑法：node tools/ci-log.mjs
-const [OWNER, REPO] = ['Chen-ser', 'yangshan-schedule'];
+// ★ 仓库规范名是 YangShan-schedule（大写 Y、大写 S）；github.com 网址大小写不敏感，
+//   但 GitHub Pages 的路径敏感，所以别在这里改成全小写再拿去拼站点地址。
+const [OWNER, REPO] = ['Chen-ser', 'YangShan-schedule'];
 const UA = { 'user-agent': 'yangshan-schedule-ci-probe' };
 
 const get = async (url) => {

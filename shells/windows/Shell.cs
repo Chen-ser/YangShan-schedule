@@ -36,9 +36,13 @@ internal sealed class ShellRuntime : IDisposable
     /// <summary>
     /// 默认托管地址。只在「没内嵌内核、本地也没有 dist」时才会用到 ——
     /// 正常路径是内嵌的 /app.html，离线可用；这个地址是最后的退路。
-    /// 仓库：https://github.com/Chen-ser/yangshan-schedule
+    /// 仓库：https://github.com/Chen-ser/YangShan-schedule
+    ///
+    /// ★ 大小写不能改：仓库的规范名是 `YangShan-schedule`（大写 Y、大写 S）。
+    ///   github.com 的仓库网址大小写不敏感，但 **GitHub Pages 的路径大小写敏感** ——
+    ///   全小写的 `.../yangshan-schedule/` 会返回 404。踩过一次。
     /// </summary>
-    public const string HostedUrl = "https://chen-ser.github.io/yangshan-schedule/";
+    public const string HostedUrl = "https://chen-ser.github.io/YangShan-schedule/";
 
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 

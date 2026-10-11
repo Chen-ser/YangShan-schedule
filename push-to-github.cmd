@@ -22,7 +22,7 @@ chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
 
-set REPO_URL=https://github.com/Chen-ser/yangshan-schedule.git
+set REPO_URL=https://github.com/Chen-ser/YangShan-schedule.git
 
 echo.
 echo   YangShan Schedule  --  push to GitHub
@@ -87,10 +87,14 @@ echo    PUSH OK
 echo   ================================================
 echo.
 echo   Next, turn on GitHub Pages:
-echo     1. open https://github.com/Chen-ser/yangshan-schedule/settings/pages
+echo     1. open https://github.com/Chen-ser/YangShan-schedule/settings/pages
 echo     2. under "Build and deployment" set Source = "GitHub Actions"
 echo     3. wait about 1 minute, then open:
-echo        https://chen-ser.github.io/yangshan-schedule/
+echo        https://chen-ser.github.io/YangShan-schedule/
+echo.
+echo   NOTE the repo name keeps its capitals: YangShan-schedule.
+echo   github.com is case-insensitive but the Pages URL is NOT --
+echo   the all-lowercase path returns 404.
 
 :end
 echo.

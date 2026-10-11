@@ -33,14 +33,16 @@
 | 产物 | 给谁用 | 怎么拿到 |
 | --- | --- | --- |
 | `仰山课表.html` | 所有人。**一个文件就是全部**（约 10MB，因为把截图 OCR 的引擎和中文语言包一起内联了），双击打开即用、断网可用 | [Releases](../../releases) 下载 |
-| `dist/site/` | iOS / 鸿蒙用户。托管成 PWA，加到桌面像原生 App，能离线；首页只有 200KB，OCR 资产放 `ocr/` 按需取 | **已托管**：[chen-ser.github.io/yangshan-schedule](https://chen-ser.github.io/yangshan-schedule/)（推 `main` 自动发布） |
+| `dist/site/` | iOS / 鸿蒙用户。托管成 PWA，加到桌面像原生 App，能离线；首页只有 200KB，OCR 资产放 `ocr/` 按需取 | **已托管**：[chen-ser.github.io/YangShan-schedule](https://chen-ser.github.io/YangShan-schedule/)（推 `main` 自动发布） |
 | **Windows 壳**（`shells/windows/`） | 想要「输一次账号，之后每小时自动更新」的 Windows 用户 | 自己编译（约 160KB 的 exe，把 10MB 内核打在程序集里） |
 | **安卓壳**（`shells/android/`） | 同上，安卓手机 | 自己编译 APK（**已编译验证**，产物 9.24 MB） |
 | 抓取书签 | iOS / 鸿蒙用来把课表数据弄进网页 | 网页内「我的 → 抓取课表」复制 |
 
 五个页面：**课表**（周视图）、**逐日**、**待办**、**公告**、**我的**。
 
-**在线地址**：[**chen-ser.github.io/yangshan-schedule**](https://chen-ser.github.io/yangshan-schedule/)
+**在线地址**：[**chen-ser.github.io/YangShan-schedule**](https://chen-ser.github.io/YangShan-schedule/)
+
+> ⚠️ **大小写不能改**。仓库的规范名是 `YangShan-schedule`（大写 Y、大写 S）。github.com 的仓库网址大小写不敏感，但 **GitHub Pages 的路径敏感** —— 全小写的 `/yangshan-schedule/` 会返回 404。这个坑实际踩过一次。
 
 托管版由 GitHub Actions 自动发布（推 `main` 即部署，部署前先跑一遍测试）。手机浏览器打开上面的地址
 → 「添加到主屏幕」→ 桌面上就多一个仰山课表，能离线打开，不用装任何 App。

@@ -5,7 +5,10 @@
 //   Node 自带 OpenSSL 不受影响（见 README「网络环境注意」）。
 //
 // 只读：全是 GET，不带任何凭据，用的是 GitHub 的匿名接口（每小时 60 次，够用）。
-const [OWNER, REPO] = ['Chen-ser', 'yangshan-schedule'];
+// ★ 大小写不能改：仓库规范名是 `YangShan-schedule`（大写 Y、大写 S）。
+//   github.com 的仓库网址大小写不敏感，但 **GitHub Pages 的路径敏感** ——
+//   全小写会 404。
+const [OWNER, REPO] = ['Chen-ser', 'YangShan-schedule'];
 const SITE = `https://${OWNER.toLowerCase()}.github.io/${REPO}/`;
 
 const H = { 'user-agent': 'yangshan-schedule-publish-check', accept: 'application/vnd.github+json' };
@@ -70,6 +73,9 @@ if (apiUsable) {
   }
 
   // 4) Pages 配置
+  //
+  // ⚠️ 匿名请求读这个端点会返回 404，**即使 Pages 已经启用**（它需要 pages:read 权限）。
+  //    所以「404」在这里只能当作"读不到"，不能当作"没启用" —— 权威信号是下面直连站点那一段。
   const pages = await api(`/repos/${OWNER}/${REPO}/pages`);
   if (pages.status === 200) {
     line(true, 'Pages 已启用', `status=${pages.body.status}  build_type=${pages.body.build_type}  url=${pages.body.html_url}`);
@@ -77,7 +83,7 @@ if (apiUsable) {
       line(false, '  ⚠ build_type 不是 workflow', '到 Settings → Pages 把 Source 改成 GitHub Actions');
     }
   } else {
-    line(false, 'Pages 还没启用或读不到', `HTTP ${pages.status}（未启用时是 404，去 Settings → Pages 选 GitHub Actions）`);
+    line(false, 'Pages 配置读不到（匿名请求通常是 404，不代表没启用）', `HTTP ${pages.status} —— 以站点直连结果为准`);
   }
 }
 
