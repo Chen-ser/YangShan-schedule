@@ -86,6 +86,29 @@ export async function openSession(url, extraArgs = []) {
     return r.result && r.result.value;
   };
 
+  /**
+   * ★ 等目标页导航完成再返回。
+   *
+   * 把 URL 直接交给 Edge 时，`findPageWs` 可能在**导航途中**就拿到 target ——
+   * 这时求值会撞 `{"code":-32000,"message":"Execution context was destroyed."}`。
+   * file:// 加载太快所以一直没暴露，第一次拿线上 https 页面测就现了原形。
+   */
+  const settle = async (want) => {
+    const head = String(want).split('#')[0];
+    for (let i = 0; i < 120; i++) {
+      try {
+        const href = await evaluate('location.href', { timeoutMs: 4000 });
+        if (href && href !== 'about:blank' && href.startsWith(head)) {
+          const state = await evaluate('document.readyState', { timeoutMs: 4000 });
+          if (state === 'complete') return true;
+        }
+      } catch { /* 上下文被销毁或还没建好，下一轮再试 */ }
+      await sleep(250);
+    }
+    return false;
+  };
+  await settle(url);
+
   /** 截当前视口到 png 文件。返回字节数。 */
   const screenshot = async (file, { width = 1000, height = 900 } = {}) => {
     await send('Emulation.setDeviceMetricsOverride', {
