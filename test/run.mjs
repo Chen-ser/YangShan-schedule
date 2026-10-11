@@ -55,6 +55,28 @@ function throws(fn, msg = 'expected throw') {
   if (!threw) fail(msg);
 }
 
+// ================================================================
+// 0b. 移动端课表布局护栏
+// 七天课表在窄屏上不能把每列压到不可读的窄条；网格应保留最小列宽，
+// 由外层容器提供横向滚动。这个检查直接针对最终会被内联进页面的 CSS。
+
+t('移动端课表网格保留最小列宽并允许横向滚动', () => {
+  const css = readFileSync(join(ROOT, 'web/styles.css'), 'utf8');
+  ok(/\.grid-wrap[\s\S]*?overflow-x:\s*auto/.test(css), '课表容器必须支持横向滚动');
+  ok(/\.grid-head[\s\S]*?min-width:\s*calc\(38px \+ var\(--days, 7\) \* 50px\)/.test(css), '表头必须有最小宽度');
+  ok(/\.grid-body[\s\S]*?min-width:\s*calc\(38px \+ var\(--days, 7\) \* 50px\)/.test(css), '表体必须有最小宽度');
+});
+
+t('品牌资源会注入页面模板', () => {
+  const template = readFileSync(join(ROOT, 'web/template.html'), 'utf8');
+  const build = readFileSync(join(ROOT, 'web/build.mjs'), 'utf8');
+  ok(template.includes('仰山课表'), '页面品牌名');
+  ok(template.includes('/*{{BRAND_LOGO}}*/'), '主页品牌图占位符');
+  ok(template.includes('/*{{ABOUT_IMAGE}}*/'), '关于页图片占位符');
+  ok(build.includes("brand-logo.jpg"), '构建脚本读取主页品牌图');
+  ok(build.includes("about-contact.jpg"), '构建脚本读取关于页图片');
+});
+
 // ================================================================ 0. 浏览器安全
 // 这是把核心从"只能在 Node 跑"改造成"四端共用"之后必须守住的一条线：
 // 核心文件里一旦出现 node:crypto / Buffer / process，打包进网页后浏览器直接崩。

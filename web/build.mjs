@@ -22,6 +22,7 @@ const ROOT = join(HERE, '..');
 const DIST = join(ROOT, 'dist');
 
 const read = (...p) => readFileSync(join(ROOT, ...p), 'utf8');
+const ASSET_DIR = join(ROOT, 'web', 'assets');
 
 // ---------------------------------------------------------------- 版本
 
@@ -297,6 +298,9 @@ function build() {
     512: drawIcon(512),
   };
   const dataUri = (buf) => 'data:image/png;base64,' + buf.toString('base64');
+  const imageDataUri = (file) => `data:image/jpeg;base64,${readFileSync(join(ASSET_DIR, file)).toString('base64')}`;
+  const brandLogo = imageDataUri('brand-logo.jpg');
+  const aboutImage = imageDataUri('about-contact.jpg');
 
   rmSync(DIST, { recursive: true, force: true });
   mkdirSync(join(DIST, 'site', 'icons'), { recursive: true });
@@ -380,6 +384,8 @@ self.addEventListener('fetch', (e) => {
       .replace('<!--{{OCRLIBS}}-->', () => ocrLibs || '')
       .replace('/*{{ICON16}}*/', () => icon16)
       .replace('/*{{ICON180}}*/', () => icon180)
+      .replace('/*{{BRAND_LOGO}}*/', () => brandLogo)
+      .replace('/*{{ABOUT_IMAGE}}*/', () => aboutImage)
       .replace('<!--{{MANIFEST}}-->', () => manifestTag)
       .replace('<!--{{SW}}-->', () => sw)
       .replace(/__VERSION__/g, VERSION);
