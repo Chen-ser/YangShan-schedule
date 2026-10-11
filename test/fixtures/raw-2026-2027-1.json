@@ -1,0 +1,1147 @@
+{
+ "kind": "yangshan-raw",
+ "schema": 1,
+ "source": "bookmarklet",
+ "capturedAt": "2026-10-09T12:00:00.000Z",
+ "note": "真实抓取结果脱敏后的回归样本：学号、姓名、教师姓名与内部编码已置换，课程/教室/节次/周次/周历保持原样。",
+ "currentUser": {
+  "code": "0",
+  "datas": {
+   "userId": "2026000000",
+   "welcomeInfo": {
+    "xnxqmc": "2026-2027学年 第一学期",
+    "classWeek": 5,
+    "xnxqdm": "2026-2027-1",
+    "date": "今天是10月9日 星期五"
+   },
+   "userType": "student"
+  }
+ },
+ "termWeeks": {
+  "code": "0",
+  "datas": {
+   "getTermWeeks": [
+    {
+     "startDate": "2026-09-07 00:00:00",
+     "endDate": "2026-09-13 23:59:59",
+     "term": "2026-2027-1",
+     "curWeek": false,
+     "serialNumber": 1,
+     "name": "第1周"
+    },
+    {
+     "startDate": "2026-09-14 00:00:00",
+     "endDate": "2026-09-20 23:59:59",
+     "term": "2026-2027-1",
+     "curWeek": false,
+     "serialNumber": 2,
+     "name": "第2周"
+    },
+    {
+     "startDate": "2026-09-21 00:00:00",
+     "endDate": "2026-09-27 23:59:59",
+     "term": "2026-2027-1",
+     "curWeek": false,
+     "serialNumber": 3,
+     "name": "第3周"
+    },
+    {
+     "startDate": "2026-09-28 00:00:00",
+     "endDate": "2026-10-04 23:59:59",
+     "term": "2026-2027-1",
+     "curWeek": false,
+     "serialNumber": 4,
+     "name": "第4周"
+    },
+    {
+     "startDate": "2026-10-05 00:00:00",
+     "endDate": "2026-10-11 23:59:59",
+     "term": "2026-2027-1",
+     "curWeek": true,
+     "serialNumber": 5,
+     "name": "第5周"
+    },
+    {
+     "startDate": "2026-10-12 00:00:00",
+     "endDate": "2026-10-18 23:59:59",
+     "term": "2026-2027-1",
+     "curWeek": false,
+     "serialNumber": 6,
+     "name": "第6周"
+    },
+    {
+     "startDate": "2026-10-19 00:00:00",
+     "endDate": "2026-10-25 23:59:59",
+     "term": "2026-2027-1",
+     "curWeek": false,
+     "serialNumber": 7,
+     "name": "第7周"
+    },
+    {
+     "startDate": "2026-10-26 00:00:00",
+     "endDate": "2026-11-01 23:59:59",
+     "term": "2026-2027-1",
+     "curWeek": false,
+     "serialNumber": 8,
+     "name": "第8周"
+    },
+    {
+     "startDate": "2026-11-02 00:00:00",
+     "endDate": "2026-11-08 23:59:59",
+     "term": "2026-2027-1",
+     "curWeek": false,
+     "serialNumber": 9,
+     "name": "第9周"
+    },
+    {
+     "startDate": "2026-11-09 00:00:00",
+     "endDate": "2026-11-15 23:59:59",
+     "term": "2026-2027-1",
+     "curWeek": false,
+     "serialNumber": 10,
+     "name": "第10周"
+    },
+    {
+     "startDate": "2026-11-16 00:00:00",
+     "endDate": "2026-11-22 23:59:59",
+     "term": "2026-2027-1",
+     "curWeek": false,
+     "serialNumber": 11,
+     "name": "第11周"
+    },
+    {
+     "startDate": "2026-11-23 00:00:00",
+     "endDate": "2026-11-29 23:59:59",
+     "term": "2026-2027-1",
+     "curWeek": false,
+     "serialNumber": 12,
+     "name": "第12周"
+    },
+    {
+     "startDate": "2026-11-30 00:00:00",
+     "endDate": "2026-12-06 23:59:59",
+     "term": "2026-2027-1",
+     "curWeek": false,
+     "serialNumber": 13,
+     "name": "第13周"
+    },
+    {
+     "startDate": "2026-12-07 00:00:00",
+     "endDate": "2026-12-13 23:59:59",
+     "term": "2026-2027-1",
+     "curWeek": false,
+     "serialNumber": 14,
+     "name": "第14周"
+    },
+    {
+     "startDate": "2026-12-14 00:00:00",
+     "endDate": "2026-12-20 23:59:59",
+     "term": "2026-2027-1",
+     "curWeek": false,
+     "serialNumber": 15,
+     "name": "第15周"
+    },
+    {
+     "startDate": "2026-12-21 00:00:00",
+     "endDate": "2026-12-27 23:59:59",
+     "term": "2026-2027-1",
+     "curWeek": false,
+     "serialNumber": 16,
+     "name": "第16周"
+    },
+    {
+     "startDate": "2026-12-28 00:00:00",
+     "endDate": "2027-01-03 23:59:59",
+     "term": "2026-2027-1",
+     "curWeek": false,
+     "serialNumber": 17,
+     "name": "第17周"
+    },
+    {
+     "startDate": "2027-01-04 00:00:00",
+     "endDate": "2027-01-10 23:59:59",
+     "term": "2026-2027-1",
+     "curWeek": false,
+     "serialNumber": 18,
+     "name": "第18周"
+    },
+    {
+     "startDate": "2027-01-11 00:00:00",
+     "endDate": "2027-01-17 23:59:59",
+     "term": "2026-2027-1",
+     "curWeek": false,
+     "serialNumber": 19,
+     "name": "第19周"
+    }
+   ]
+  }
+ },
+ "scheduleDetail": {
+  "msg": null,
+  "code": "0",
+  "datas": {
+   "notArrangeList": [
+    {
+     "week": "0001111111110000000",
+     "beginTime": "",
+     "beginSection": null,
+     "endSection": null,
+     "titleDetail": [
+      "艺术导论(通识课)[AE107]",
+      "4-12周 <a data-kblx=\"02\">某老师</a>"
+     ],
+     "tags": [],
+     "multiCourse": null,
+     "teachingTarget": null,
+     "weeksAndTeachers": "4-12周[讲授]/某老师[主讲]",
+     "teachClassName": null,
+     "courseSerialNo": "02",
+     "placeName": null,
+     "teachClassId": "202620271AE10702",
+     "cellDetail": [
+      {
+       "color": null,
+       "text": "艺术导论(通识课)[AE107]"
+      },
+      {
+       "color": null,
+       "text": "4-12周<a data-kblx=\"02\">某老师</a> "
+      }
+     ],
+     "byCode": "0",
+     "credit": "2.0",
+     "courseName": "艺术导论(通识课)",
+     "courseCode": "AE107",
+     "endTime": "",
+     "color": null,
+     "dayOfWeek": null
+    },
+    {
+     "week": "1111111",
+     "beginTime": "",
+     "beginSection": null,
+     "endSection": null,
+     "titleDetail": [
+      "大学生安全知识教育[UNIV100]",
+      "1-7周 <a data-kblx=\"02\">某老师</a>",
+      "1-7周 <a data-kblx=\"02\">某老师</a>"
+     ],
+     "tags": [],
+     "multiCourse": null,
+     "teachingTarget": "2026级财务管理,2026级大数据管理与应用,2026级电子信息工程,2026级工商管理,2026级会计学(注册会计师),2026级计算机科学与技术,2026级软件工程,2026级数据科学与大数据技术,2026级数字经济,2026级新能源科学与工程,2026级信息管理与信息系统,2026级智能交互设计,2026级智能制造工程",
+     "weeksAndTeachers": "1-7周[讲授]/某老师[主讲]; 1-7周[讲授]/某老师[主讲]",
+     "teachClassName": null,
+     "courseSerialNo": "11",
+     "placeName": "",
+     "teachClassId": "202620271UNIV10011",
+     "cellDetail": [
+      {
+       "color": null,
+       "text": "大学生安全知识教育[UNIV100]"
+      },
+      {
+       "color": null,
+       "text": "1-7周<a data-kblx=\"02\">某老师</a> "
+      },
+      {
+       "color": null,
+       "text": "1-7周<a data-kblx=\"02\">某老师</a> "
+      }
+     ],
+     "byCode": "0",
+     "credit": "1.0",
+     "courseName": "大学生安全知识教育",
+     "courseCode": "UNIV100",
+     "endTime": "",
+     "color": null,
+     "dayOfWeek": null
+    },
+    {
+     "week": "0011111111111100000",
+     "beginTime": "",
+     "beginSection": null,
+     "endSection": null,
+     "titleDetail": [
+      "大学生职业规划[UNIV103]",
+      "3-14周 <a data-kblx=\"02\">某老师</a>"
+     ],
+     "tags": [],
+     "multiCourse": null,
+     "teachingTarget": "2026级大数据管理与应用,2026级电子信息工程,2026级会计学(注册会计师),2026级计算机科学与技术,2026级数字经济,2026级信息管理与信息系统",
+     "weeksAndTeachers": "3-14周[数字化]/某老师[主讲]",
+     "teachClassName": null,
+     "courseSerialNo": "06",
+     "placeName": null,
+     "teachClassId": "202620271UNIV10306",
+     "cellDetail": [
+      {
+       "color": null,
+       "text": "大学生职业规划[UNIV103]"
+      },
+      {
+       "color": null,
+       "text": "3-14周<a data-kblx=\"02\">某老师</a> "
+      }
+     ],
+     "byCode": "0",
+     "credit": "1.0",
+     "courseName": "大学生职业规划",
+     "courseCode": "UNIV103",
+     "endTime": "",
+     "color": null,
+     "dayOfWeek": null
+    },
+    {
+     "week": "1100000000000000000",
+     "beginTime": "",
+     "beginSection": null,
+     "endSection": null,
+     "titleDetail": [
+      "军训[UNIV161]",
+      "1-2周 <a data-kblx=\"02\">某老师</a>"
+     ],
+     "tags": [],
+     "multiCourse": null,
+     "teachingTarget": "2026级软件工程，2026级工商管理，2026级数字经济，2026级信息管理与信息系统，2026级大数据管理与应用，2026级新能源科学与工程，2026级电子信息工程，2026级财务管理，2026级智能制造工程，2026级智能交互设计，2026级会计学(注册会计师)，2026级计算机科学与技术，2026级数据科学与大数据技术",
+     "weeksAndTeachers": "1-2周[实验]/某老师[主讲]",
+     "teachClassName": null,
+     "courseSerialNo": "02",
+     "placeName": null,
+     "teachClassId": "202620271UNIV16102",
+     "cellDetail": [
+      {
+       "color": null,
+       "text": "军训[UNIV161]"
+      },
+      {
+       "color": null,
+       "text": "1-2周<a data-kblx=\"02\">某老师</a> "
+      }
+     ],
+     "byCode": "0",
+     "credit": "2.0",
+     "courseName": "军训",
+     "courseCode": "UNIV161",
+     "endTime": "",
+     "color": null,
+     "dayOfWeek": null
+    },
+    {
+     "week": "0011111111111111100",
+     "beginTime": "",
+     "beginSection": null,
+     "endSection": null,
+     "titleDetail": [
+      "智能制造产业认知与素养[IOE102]",
+      "3-17周 <a data-kblx=\"02\">某老师</a>"
+     ],
+     "tags": [],
+     "multiCourse": null,
+     "teachingTarget": "2026级软件工程，2026级工商管理，2026级数字经济，2026级信息管理与信息系统，2026级大数据管理与应用，2026级新能源科学与工程，2026级数据科学与大数据技术，2026级财务管理，2026级智能制造工程，2026级智能交互设计，2026级会计学(注册会计师)，2026级计算机科学与技术，2026级电子信息工程",
+     "weeksAndTeachers": "3-17周[讲授]/某老师[主讲]",
+     "teachClassName": null,
+     "courseSerialNo": "02",
+     "placeName": null,
+     "teachClassId": "202620271IOE10202",
+     "cellDetail": [
+      {
+       "color": null,
+       "text": "智能制造产业认知与素养[IOE102]"
+      },
+      {
+       "color": null,
+       "text": "3-17周<a data-kblx=\"02\">某老师</a> "
+      }
+     ],
+     "byCode": "0",
+     "credit": "1.0",
+     "courseName": "智能制造产业认知与素养",
+     "courseCode": "IOE102",
+     "endTime": "",
+     "color": null,
+     "dayOfWeek": null
+    }
+   ],
+   "arrangedList": [
+    {
+     "week": "001111111111",
+     "beginTime": "13:30",
+     "beginSection": 5,
+     "endSection": 7,
+     "titleDetail": [
+      "程序设计基础(C语言)B"
+     ],
+     "tags": [],
+     "multiCourse": "202620271CS101b11,202620271CS101b11S01",
+     "teachingTarget": "2026级大数据管理与应用,2026级电子信息工程,2026级计算机科学与技术,2026级软件工程,2026级新能源科学与工程,2026级信息管理与信息系统,2026级智能交互设计,2026级智能制造工程",
+     "weeksAndTeachers": "3-12周[讲授]/某老师[主讲]",
+     "teachClassName": null,
+     "courseSerialNo": "11",
+     "placeName": "汇贤堂",
+     "teachClassId": "202620271CS101b11",
+     "cellDetail": [
+      {
+       "color": null,
+       "text": "程序设计基础(C语言)B"
+      }
+     ],
+     "byCode": "0",
+     "credit": "3.0",
+     "courseName": "程序设计基础(C语言)B",
+     "courseCode": "CS101b",
+     "endTime": "15:55",
+     "color": "#FFF0CC",
+     "dayOfWeek": 1
+    },
+    {
+     "week": "0000001",
+     "beginTime": "09:20",
+     "beginSection": 2,
+     "endSection": 9,
+     "titleDetail": [
+      "人工智能导论[CS117]",
+      "7周 <a data-kblx=\"02\">某老师</a> <a data-kblx=\"01\">汇贤堂</a>"
+     ],
+     "tags": [],
+     "multiCourse": null,
+     "teachingTarget": "2026级智能制造工程，2026级数字经济，2026级电子信息工程，2026级智能交互设计，2026级工商管理，2026级软件工程，2026级信息管理与信息系统，2026级财务管理，2026级会计学(注册会计师)，2026级大数据管理与应用，2026级数据科学与大数据技术，2026级计算机科学与技术，2026级新能源科学与工程",
+     "weeksAndTeachers": "7周[实验]/某老师[主讲]",
+     "teachClassName": null,
+     "courseSerialNo": "04S01",
+     "placeName": "汇贤堂",
+     "teachClassId": "202620271CS11704S01",
+     "cellDetail": [
+      {
+       "color": null,
+       "text": "人工智能导论[CS117]"
+      },
+      {
+       "color": null,
+       "text": "7周<a data-kblx=\"02\">某老师</a>  第2节-第9节 <a data-kblx=\"01\">汇贤堂</a> "
+      }
+     ],
+     "byCode": "0",
+     "credit": "2.0",
+     "courseName": "人工智能导论",
+     "courseCode": "CS117",
+     "endTime": "17:45",
+     "color": "#FFDDD3",
+     "dayOfWeek": 7
+    },
+    {
+     "week": "00111111111111",
+     "beginTime": "08:30",
+     "beginSection": 1,
+     "endSection": 3,
+     "titleDetail": [
+      "中国近现代史纲要[MARX102]",
+      "3-14周 <a data-kblx=\"02\">某老师</a> <a data-kblx=\"01\">ZXB-306</a>"
+     ],
+     "tags": [],
+     "multiCourse": null,
+     "teachingTarget": "2026级数据科学与大数据技术,2026级新能源科学与工程",
+     "weeksAndTeachers": "3-14周[讲授]/某老师[主讲]",
+     "teachClassName": null,
+     "courseSerialNo": "23",
+     "placeName": "ZXB-306",
+     "teachClassId": "202620271MARX10223",
+     "cellDetail": [
+      {
+       "color": null,
+       "text": "中国近现代史纲要[MARX102]"
+      },
+      {
+       "color": null,
+       "text": "3-14周<a data-kblx=\"02\">某老师</a>  第1节-第3节 <a data-kblx=\"01\">ZXB-306</a> "
+      }
+     ],
+     "byCode": "0",
+     "credit": "3.0",
+     "courseName": "中国近现代史纲要",
+     "courseCode": "MARX102",
+     "endTime": "11:05",
+     "color": "#D3EAFD",
+     "dayOfWeek": 1
+    },
+    {
+     "week": "00000000000000111",
+     "beginTime": "08:30",
+     "beginSection": 1,
+     "endSection": 4,
+     "titleDetail": [
+      "中国近现代史纲要[MARX102]",
+      "15-17周 <a data-kblx=\"02\">某老师</a> <a data-kblx=\"01\">ZXB-306</a>"
+     ],
+     "tags": [],
+     "multiCourse": null,
+     "teachingTarget": "2026级数据科学与大数据技术,2026级新能源科学与工程",
+     "weeksAndTeachers": "15-17周[讲授]/某老师[主讲]",
+     "teachClassName": null,
+     "courseSerialNo": "23",
+     "placeName": "ZXB-306",
+     "teachClassId": "202620271MARX10223",
+     "cellDetail": [
+      {
+       "color": null,
+       "text": "中国近现代史纲要[MARX102]"
+      },
+      {
+       "color": null,
+       "text": "15-17周<a data-kblx=\"02\">某老师</a>  第1节-第4节 <a data-kblx=\"01\">ZXB-306</a> "
+      }
+     ],
+     "byCode": "0",
+     "credit": "3.0",
+     "courseName": "中国近现代史纲要",
+     "courseCode": "MARX102",
+     "endTime": "11:55",
+     "color": "#D3EAFD",
+     "dayOfWeek": 1
+    },
+    {
+     "week": "000000001",
+     "beginTime": "16:10",
+     "beginSection": 8,
+     "endSection": 9,
+     "titleDetail": [
+      "形势与政策(1)[MARX111]",
+      "9周 <a data-kblx=\"02\">某老师</a> <a data-kblx=\"01\">ZXB-203</a>"
+     ],
+     "tags": [],
+     "multiCourse": null,
+     "teachingTarget": "2026级财务管理",
+     "weeksAndTeachers": "9周[讲授]/某老师[主讲]",
+     "teachClassName": null,
+     "courseSerialNo": "40",
+     "placeName": "ZXB-203",
+     "teachClassId": "202620271MARX11140",
+     "cellDetail": [
+      {
+       "color": null,
+       "text": "形势与政策(1)[MARX111]"
+      },
+      {
+       "color": null,
+       "text": "9周<a data-kblx=\"02\">某老师</a>  第8节-第9节 <a data-kblx=\"01\">ZXB-203</a> "
+      }
+     ],
+     "byCode": "0",
+     "credit": "0.25",
+     "courseName": "形势与政策(1)",
+     "courseCode": "MARX111",
+     "endTime": "17:45",
+     "color": "#D3F4F8",
+     "dayOfWeek": 1
+    },
+    {
+     "week": "0000000000001",
+     "beginTime": "13:30",
+     "beginSection": 5,
+     "endSection": 6,
+     "titleDetail": [
+      "程序设计基础(C语言)B[CS101b]",
+      "13周 <a data-kblx=\"02\">某老师</a> <a data-kblx=\"01\">汇贤堂</a>"
+     ],
+     "tags": [],
+     "multiCourse": null,
+     "teachingTarget": "2026级大数据管理与应用,2026级电子信息工程,2026级计算机科学与技术,2026级软件工程,2026级新能源科学与工程,2026级信息管理与信息系统,2026级智能交互设计,2026级智能制造工程",
+     "weeksAndTeachers": "13周[讲授]/某老师[主讲]",
+     "teachClassName": null,
+     "courseSerialNo": "11",
+     "placeName": "汇贤堂",
+     "teachClassId": "202620271CS101b11",
+     "cellDetail": [
+      {
+       "color": null,
+       "text": "程序设计基础(C语言)B[CS101b]"
+      },
+      {
+       "color": null,
+       "text": "13周<a data-kblx=\"02\">某老师</a>  第5节-第6节 <a data-kblx=\"01\">汇贤堂</a> "
+      }
+     ],
+     "byCode": "0",
+     "credit": "3.0",
+     "courseName": "程序设计基础(C语言)B",
+     "courseCode": "CS101b",
+     "endTime": "15:05",
+     "color": "#FFF0CC",
+     "dayOfWeek": 1
+    },
+    {
+     "week": "0000000000111111",
+     "beginTime": "08:30",
+     "beginSection": 1,
+     "endSection": 3,
+     "titleDetail": [
+      "高等数学(2)[MATH132]",
+      "11-16周 <a data-kblx=\"02\">某老师</a> <a data-kblx=\"01\">ZXD-205</a>"
+     ],
+     "tags": [],
+     "multiCourse": null,
+     "teachingTarget": null,
+     "weeksAndTeachers": "11-16周[讲授]/某老师[主讲]",
+     "teachClassName": null,
+     "courseSerialNo": "32",
+     "placeName": "ZXD-205",
+     "teachClassId": "202620271MATH13232",
+     "cellDetail": [
+      {
+       "color": null,
+       "text": "高等数学(2)[MATH132]"
+      },
+      {
+       "color": null,
+       "text": "11-16周<a data-kblx=\"02\">某老师</a>  第1节-第3节 <a data-kblx=\"01\">ZXD-205</a> "
+      }
+     ],
+     "byCode": "0",
+     "credit": "2.0",
+     "courseName": "高等数学(2)",
+     "courseCode": "MATH132",
+     "endTime": "11:05",
+     "color": "#E8F3DB",
+     "dayOfWeek": 2
+    },
+    {
+     "week": "00100101",
+     "beginTime": "13:30",
+     "beginSection": 5,
+     "endSection": 6,
+     "titleDetail": [
+      "形势与政策(1)[MARX111]",
+      "3周,6-8周(双) <a data-kblx=\"02\">某老师</a> <a data-kblx=\"01\">ZXB-303</a>"
+     ],
+     "tags": [],
+     "multiCourse": null,
+     "teachingTarget": "2026级财务管理",
+     "weeksAndTeachers": "3周,6-8周(双)[讲授]/某老师[主讲]",
+     "teachClassName": null,
+     "courseSerialNo": "40",
+     "placeName": "ZXB-303",
+     "teachClassId": "202620271MARX11140",
+     "cellDetail": [
+      {
+       "color": null,
+       "text": "形势与政策(1)[MARX111]"
+      },
+      {
+       "color": null,
+       "text": "3周,6-8周(双)<a data-kblx=\"02\">某老师</a>  第5节-第6节 <a data-kblx=\"01\">ZXB-303</a> "
+      }
+     ],
+     "byCode": "0",
+     "credit": "0.25",
+     "courseName": "形势与政策(1)",
+     "courseCode": "MARX111",
+     "endTime": "15:05",
+     "color": "#D3F4F8",
+     "dayOfWeek": 3
+    },
+    {
+     "week": "0000000000111111",
+     "beginTime": "13:30",
+     "beginSection": 5,
+     "endSection": 6,
+     "titleDetail": [
+      "高等数学(2)[MATH132]",
+      "11-16周 <a data-kblx=\"02\">某老师</a> <a data-kblx=\"01\">ZXD-205</a>"
+     ],
+     "tags": [],
+     "multiCourse": null,
+     "teachingTarget": null,
+     "weeksAndTeachers": "11-16周[讲授]/某老师[主讲]",
+     "teachClassName": null,
+     "courseSerialNo": "32",
+     "placeName": "ZXD-205",
+     "teachClassId": "202620271MATH13232",
+     "cellDetail": [
+      {
+       "color": null,
+       "text": "高等数学(2)[MATH132]"
+      },
+      {
+       "color": null,
+       "text": "11-16周<a data-kblx=\"02\">某老师</a>  第5节-第6节 <a data-kblx=\"01\">ZXD-205</a> "
+      }
+     ],
+     "byCode": "0",
+     "credit": "2.0",
+     "courseName": "高等数学(2)",
+     "courseCode": "MATH132",
+     "endTime": "15:05",
+     "color": "#E8F3DB",
+     "dayOfWeek": 5
+    },
+    {
+     "week": "0011111111",
+     "beginTime": "08:30",
+     "beginSection": 1,
+     "endSection": 3,
+     "titleDetail": [
+      "高等数学(1)[MATH131]",
+      "3-10周 <a data-kblx=\"02\">某老师</a> <a data-kblx=\"01\">ZXD-205</a>"
+     ],
+     "tags": [],
+     "multiCourse": null,
+     "teachingTarget": "2026级智能制造工程，2026级智能交互设计，2026级新能源科学与工程，2026级数据科学与大数据技术，2026级财务管理，2026级数字经济，2026级信息管理与信息系统，2026级大数据管理与应用，2026级会计学(注册会计师)，2026级计算机科学与技术，2026级电子信息工程，2026级软件工程，2026级工商管理",
+     "weeksAndTeachers": "3-10周[讲授]/某老师[主讲]",
+     "teachClassName": null,
+     "courseSerialNo": "34",
+     "placeName": "ZXD-205",
+     "teachClassId": "202620271MATH13134",
+     "cellDetail": [
+      {
+       "color": null,
+       "text": "高等数学(1)[MATH131]"
+      },
+      {
+       "color": null,
+       "text": "3-10周<a data-kblx=\"02\">某老师</a>  第1节-第3节 <a data-kblx=\"01\">ZXD-205</a> "
+      }
+     ],
+     "byCode": "0",
+     "credit": "3.0",
+     "courseName": "高等数学(1)",
+     "courseCode": "MATH131",
+     "endTime": "11:05",
+     "color": "#DDE4FE",
+     "dayOfWeek": 2
+    },
+    {
+     "week": "0011111111",
+     "beginTime": "13:30",
+     "beginSection": 5,
+     "endSection": 6,
+     "titleDetail": [
+      "高等数学(1)[MATH131]",
+      "3-10周 <a data-kblx=\"02\">某老师</a> <a data-kblx=\"01\">ZXD-205</a>"
+     ],
+     "tags": [],
+     "multiCourse": null,
+     "teachingTarget": "2026级智能制造工程，2026级智能交互设计，2026级新能源科学与工程，2026级数据科学与大数据技术，2026级财务管理，2026级数字经济，2026级信息管理与信息系统，2026级大数据管理与应用，2026级会计学(注册会计师)，2026级计算机科学与技术，2026级电子信息工程，2026级软件工程，2026级工商管理",
+     "weeksAndTeachers": "3-10周[讲授]/某老师[主讲]",
+     "teachClassName": null,
+     "courseSerialNo": "34",
+     "placeName": "ZXD-205",
+     "teachClassId": "202620271MATH13134",
+     "cellDetail": [
+      {
+       "color": null,
+       "text": "高等数学(1)[MATH131]"
+      },
+      {
+       "color": null,
+       "text": "3-10周<a data-kblx=\"02\">某老师</a>  第5节-第6节 <a data-kblx=\"01\">ZXD-205</a> "
+      }
+     ],
+     "byCode": "0",
+     "credit": "3.0",
+     "courseName": "高等数学(1)",
+     "courseCode": "MATH131",
+     "endTime": "15:05",
+     "color": "#DDE4FE",
+     "dayOfWeek": 5
+    },
+    {
+     "week": "00001111111111",
+     "beginTime": "19:00",
+     "beginSection": 10,
+     "endSection": 12,
+     "titleDetail": [
+      "英语外刊选读[ENGL118]",
+      "5-14周 <a data-kblx=\"02\">某老师</a> <a data-kblx=\"01\">ZXC-205</a>"
+     ],
+     "tags": [],
+     "multiCourse": null,
+     "teachingTarget": null,
+     "weeksAndTeachers": "5-14周[讲授]/某老师[主讲]",
+     "teachClassName": null,
+     "courseSerialNo": "01",
+     "placeName": "ZXC-205",
+     "teachClassId": "202620271ENGL11801",
+     "cellDetail": [
+      {
+       "color": null,
+       "text": "英语外刊选读[ENGL118]"
+      },
+      {
+       "color": null,
+       "text": "5-14周<a data-kblx=\"02\">某老师</a>  第10节-第12节 <a data-kblx=\"01\">ZXC-205</a> "
+      }
+     ],
+     "byCode": "0",
+     "credit": "2.0",
+     "courseName": "英语外刊选读",
+     "courseCode": "ENGL118",
+     "endTime": "21:25",
+     "color": "#FCE0EA",
+     "dayOfWeek": 3
+    },
+    {
+     "week": "11",
+     "beginTime": "13:30",
+     "beginSection": 5,
+     "endSection": 6,
+     "titleDetail": [
+      "军事理论[UNIV101]",
+      "1-2周 <a data-kblx=\"02\">某老师</a> <a data-kblx=\"01\">启明厅</a>"
+     ],
+     "tags": [],
+     "multiCourse": null,
+     "teachingTarget": "2026级财务管理,2026级大数据管理与应用,2026级数据科学与大数据技术,2026级数字经济,2026级新能源科学与工程,2026级信息管理与信息系统,2026级智能交互设计,2026级智能制造工程",
+     "weeksAndTeachers": "1-2周[讲授]/某老师[主讲]",
+     "teachClassName": null,
+     "courseSerialNo": "25",
+     "placeName": "启明厅",
+     "teachClassId": "202620271UNIV10125",
+     "cellDetail": [
+      {
+       "color": null,
+       "text": "军事理论[UNIV101]"
+      },
+      {
+       "color": null,
+       "text": "1-2周<a data-kblx=\"02\">某老师</a>  第5节-第6节 <a data-kblx=\"01\">启明厅</a> "
+      }
+     ],
+     "byCode": "0",
+     "credit": "2.0",
+     "courseName": "军事理论",
+     "courseCode": "UNIV101",
+     "endTime": "15:05",
+     "color": "#CCEAE7",
+     "dayOfWeek": 2
+    },
+    {
+     "week": "11",
+     "beginTime": "13:30",
+     "beginSection": 5,
+     "endSection": 6,
+     "titleDetail": [
+      "军事理论[UNIV101]",
+      "1-2周 <a data-kblx=\"02\">某老师</a> <a data-kblx=\"01\">启明厅</a>"
+     ],
+     "tags": [],
+     "multiCourse": null,
+     "teachingTarget": "2026级财务管理,2026级大数据管理与应用,2026级数据科学与大数据技术,2026级数字经济,2026级新能源科学与工程,2026级信息管理与信息系统,2026级智能交互设计,2026级智能制造工程",
+     "weeksAndTeachers": "1-2周[讲授]/某老师[主讲]",
+     "teachClassName": null,
+     "courseSerialNo": "25",
+     "placeName": "启明厅",
+     "teachClassId": "202620271UNIV10125",
+     "cellDetail": [
+      {
+       "color": null,
+       "text": "军事理论[UNIV101]"
+      },
+      {
+       "color": null,
+       "text": "1-2周<a data-kblx=\"02\">某老师</a>  第5节-第6节 <a data-kblx=\"01\">启明厅</a> "
+      }
+     ],
+     "byCode": "0",
+     "credit": "2.0",
+     "courseName": "军事理论",
+     "courseCode": "UNIV101",
+     "endTime": "15:05",
+     "color": "#CCEAE7",
+     "dayOfWeek": 3
+    },
+    {
+     "week": "00111101",
+     "beginTime": "16:10",
+     "beginSection": 8,
+     "endSection": 9,
+     "titleDetail": [
+      "大学生心理健康[UNIV102]",
+      "3-6周,8周 <a data-kblx=\"02\">某老师</a>,<a data-kblx=\"02\">某老师</a>,<a data-kblx=\"02\">某老师</a>,<a data-kblx=\"02\">某老师</a> <a data-kblx=\"01\">启明厅</a>"
+     ],
+     "tags": [],
+     "multiCourse": null,
+     "teachingTarget": "2026级工商管理，2026级大数据管理与应用，2026级会计学(注册会计师)，2026级计算机科学与技术，2026级电子信息工程，2026级软件工程",
+     "weeksAndTeachers": "3-6周,8周[讲授]/某老师[主讲],某老师[主讲],某老师[主讲],某老师[主讲]",
+     "teachClassName": null,
+     "courseSerialNo": "10",
+     "placeName": "启明厅",
+     "teachClassId": "202620271UNIV10210",
+     "cellDetail": [
+      {
+       "color": null,
+       "text": "大学生心理健康[UNIV102]"
+      },
+      {
+       "color": null,
+       "text": "3-6周,8周<a data-kblx=\"02\">某老师</a>,<a data-kblx=\"02\">某老师</a>,<a data-kblx=\"02\">某老师</a>,<a data-kblx=\"02\">某老师</a>  第8节-第9节 <a data-kblx=\"01\">启明厅</a> "
+      }
+     ],
+     "byCode": "0",
+     "credit": "2.0",
+     "courseName": "大学生心理健康",
+     "courseCode": "UNIV102",
+     "endTime": "17:45",
+     "color": "#FFEACC",
+     "dayOfWeek": 4
+    },
+    {
+     "week": "000000000000001",
+     "beginTime": "19:00",
+     "beginSection": 10,
+     "endSection": 11,
+     "titleDetail": [
+      "英语外刊选读[ENGL118]",
+      "15周 <a data-kblx=\"02\">某老师</a> <a data-kblx=\"01\">ZXC-205</a>"
+     ],
+     "tags": [],
+     "multiCourse": null,
+     "teachingTarget": null,
+     "weeksAndTeachers": "15周[讲授]/某老师[主讲]",
+     "teachClassName": null,
+     "courseSerialNo": "01",
+     "placeName": "ZXC-205",
+     "teachClassId": "202620271ENGL11801",
+     "cellDetail": [
+      {
+       "color": null,
+       "text": "英语外刊选读[ENGL118]"
+      },
+      {
+       "color": null,
+       "text": "15周<a data-kblx=\"02\">某老师</a>  第10节-第11节 <a data-kblx=\"01\">ZXC-205</a> "
+      }
+     ],
+     "byCode": "0",
+     "credit": "2.0",
+     "courseName": "英语外刊选读",
+     "courseCode": "ENGL118",
+     "endTime": "20:35",
+     "color": "#FCE0EA",
+     "dayOfWeek": 3
+    },
+    {
+     "week": "0011111",
+     "beginTime": "10:20",
+     "beginSection": 3,
+     "endSection": 4,
+     "titleDetail": [
+      "人工智能导论[CS117]",
+      "3-7周 <a data-kblx=\"02\">某老师</a> <a data-kblx=\"01\">ZXB-505</a>"
+     ],
+     "tags": [],
+     "multiCourse": null,
+     "teachingTarget": "2026级财务管理,2026级大数据管理与应用,2026级电子信息工程,2026级工商管理,2026级会计学(注册会计师),2026级计算机科学与技术,2026级软件工程,2026级数据科学与大数据技术,2026级数字经济,2026级新能源科学与工程,2026级信息管理与信息系统,2026级智能交互设计,2026级智能制造工程",
+     "weeksAndTeachers": "3-7周[讲授]/某老师[主讲]",
+     "teachClassName": null,
+     "courseSerialNo": "04",
+     "placeName": "ZXB-505",
+     "teachClassId": "202620271CS11704",
+     "cellDetail": [
+      {
+       "color": null,
+       "text": "人工智能导论[CS117]"
+      },
+      {
+       "color": null,
+       "text": "3-7周<a data-kblx=\"02\">某老师</a>  第3节-第4节 <a data-kblx=\"01\">ZXB-505</a> "
+      }
+     ],
+     "byCode": "0",
+     "credit": "2.0",
+     "courseName": "人工智能导论",
+     "courseCode": "CS117",
+     "endTime": "11:55",
+     "color": "#FFDDD3",
+     "dayOfWeek": 4
+    },
+    {
+     "week": "11",
+     "beginTime": "13:30",
+     "beginSection": 5,
+     "endSection": 6,
+     "titleDetail": [
+      "军事理论[UNIV101]",
+      "1-2周 <a data-kblx=\"02\">某老师</a> <a data-kblx=\"01\">启明厅</a>"
+     ],
+     "tags": [],
+     "multiCourse": null,
+     "teachingTarget": "2026级财务管理,2026级大数据管理与应用,2026级数据科学与大数据技术,2026级数字经济,2026级新能源科学与工程,2026级信息管理与信息系统,2026级智能交互设计,2026级智能制造工程",
+     "weeksAndTeachers": "1-2周[讲授]/某老师[主讲]",
+     "teachClassName": null,
+     "courseSerialNo": "25",
+     "placeName": "启明厅",
+     "teachClassId": "202620271UNIV10125",
+     "cellDetail": [
+      {
+       "color": null,
+       "text": "军事理论[UNIV101]"
+      },
+      {
+       "color": null,
+       "text": "1-2周<a data-kblx=\"02\">某老师</a>  第5节-第6节 <a data-kblx=\"01\">启明厅</a> "
+      }
+     ],
+     "byCode": "0",
+     "credit": "2.0",
+     "courseName": "军事理论",
+     "courseCode": "UNIV101",
+     "endTime": "15:05",
+     "color": "#CCEAE7",
+     "dayOfWeek": 5
+    },
+    {
+     "week": "11",
+     "beginTime": "13:30",
+     "beginSection": 5,
+     "endSection": 6,
+     "titleDetail": [
+      "军事理论[UNIV101]",
+      "1-2周 <a data-kblx=\"02\">某老师</a> <a data-kblx=\"01\">启明厅</a>"
+     ],
+     "tags": [],
+     "multiCourse": null,
+     "teachingTarget": "2026级财务管理,2026级大数据管理与应用,2026级数据科学与大数据技术,2026级数字经济,2026级新能源科学与工程,2026级信息管理与信息系统,2026级智能交互设计,2026级智能制造工程",
+     "weeksAndTeachers": "1-2周[讲授]/某老师[主讲]",
+     "teachClassName": null,
+     "courseSerialNo": "25",
+     "placeName": "启明厅",
+     "teachClassId": "202620271UNIV10125",
+     "cellDetail": [
+      {
+       "color": null,
+       "text": "军事理论[UNIV101]"
+      },
+      {
+       "color": null,
+       "text": "1-2周<a data-kblx=\"02\">某老师</a>  第5节-第6节 <a data-kblx=\"01\">启明厅</a> "
+      }
+     ],
+     "byCode": "0",
+     "credit": "2.0",
+     "courseName": "军事理论",
+     "courseCode": "UNIV101",
+     "endTime": "15:05",
+     "color": "#CCEAE7",
+     "dayOfWeek": 4
+    },
+    {
+     "week": "00111111111111111",
+     "beginTime": "08:30",
+     "beginSection": 1,
+     "endSection": 2,
+     "titleDetail": [
+      "大学体育(1)[PE101]",
+      "3-17周 <a data-kblx=\"02\">某老师</a>"
+     ],
+     "tags": [],
+     "multiCourse": null,
+     "teachingTarget": "2026级电子信息工程,2026级工商管理,2026级软件工程",
+     "weeksAndTeachers": "3-17周[实验]/某老师[主讲]",
+     "teachClassName": null,
+     "courseSerialNo": "17",
+     "placeName": null,
+     "teachClassId": "202620271PE10117",
+     "cellDetail": [
+      {
+       "color": null,
+       "text": "大学体育(1)[PE101]"
+      },
+      {
+       "color": null,
+       "text": "3-17周<a data-kblx=\"02\">某老师</a>  第1节-第2节"
+      }
+     ],
+     "byCode": "0",
+     "credit": "1.0",
+     "courseName": "大学体育(1)",
+     "courseCode": "PE101",
+     "endTime": "10:05",
+     "color": "#D8DCF0",
+     "dayOfWeek": 5
+    },
+    {
+     "week": "00111111111111111",
+     "beginTime": "10:20",
+     "beginSection": 3,
+     "endSection": 4,
+     "titleDetail": [
+      "基础英语A[ENGL101a]",
+      "4-17周 <a data-kblx=\"02\">某老师</a> ZXC205",
+      "3周 <a data-kblx=\"02\">某老师</a> <a data-kblx=\"01\">ZXB-502</a>"
+     ],
+     "tags": [],
+     "multiCourse": null,
+     "teachingTarget": "2026级信息管理与信息系统",
+     "weeksAndTeachers": "4-17周[讲授]/某老师[主讲]; 3周[讲授]/某老师[主讲]",
+     "teachClassName": null,
+     "courseSerialNo": "06",
+     "placeName": "ZXB-502",
+     "teachClassId": "202620271ENGL101a06",
+     "cellDetail": [
+      {
+       "color": null,
+       "text": "基础英语A[ENGL101a]"
+      },
+      {
+       "color": null,
+       "text": "4-17周<a data-kblx=\"02\">某老师</a>  第3节-第4节 ZXC205 "
+      },
+      {
+       "color": null,
+       "text": "3周<a data-kblx=\"02\">某老师</a>  第3节-第4节 <a data-kblx=\"01\">ZXB-502</a> "
+      }
+     ],
+     "byCode": "0",
+     "credit": "4.0",
+     "courseName": "基础英语A",
+     "courseCode": "ENGL101a",
+     "endTime": "11:55",
+     "color": "#D9F2D9",
+     "dayOfWeek": 3
+    },
+    {
+     "week": "00111111111111111",
+     "beginTime": "08:30",
+     "beginSection": 1,
+     "endSection": 2,
+     "titleDetail": [
+      "基础英语A[ENGL101a]",
+      "4-17周 <a data-kblx=\"02\">某老师</a> ZXC205",
+      "3周 <a data-kblx=\"02\">某老师</a> <a data-kblx=\"01\">ZXB-502</a>"
+     ],
+     "tags": [],
+     "multiCourse": null,
+     "teachingTarget": "2026级信息管理与信息系统",
+     "weeksAndTeachers": "4-17周[讲授]/某老师[主讲]; 3周[讲授]/某老师[主讲]",
+     "teachClassName": null,
+     "courseSerialNo": "06",
+     "placeName": "ZXB-502",
+     "teachClassId": "202620271ENGL101a06",
+     "cellDetail": [
+      {
+       "color": null,
+       "text": "基础英语A[ENGL101a]"
+      },
+      {
+       "color": null,
+       "text": "4-17周<a data-kblx=\"02\">某老师</a>  第1节-第2节 ZXC205 "
+      },
+      {
+       "color": null,
+       "text": "3周<a data-kblx=\"02\">某老师</a>  第1节-第2节 <a data-kblx=\"01\">ZXB-502</a> "
+      }
+     ],
+     "byCode": "0",
+     "credit": "4.0",
+     "courseName": "基础英语A",
+     "courseCode": "ENGL101a",
+     "endTime": "10:05",
+     "color": "#D9F2D9",
+     "dayOfWeek": 4
+    }
+   ],
+   "practiceList": [],
+   "code": "2026000000",
+   "name": "某老师[2026000000]"
+  }
+ }
+}

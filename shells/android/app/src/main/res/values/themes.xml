@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        故意用系统自带的 Material 主题，不引 AppCompat / Material Components：
+        整个壳只有两个 Activity、一个 WebView，多引一个 UI 库就是白白多几 MB。
+    -->
+    <style name="Theme.YangShan" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:colorAccent">#2563EB</item>
+    </style>
+</resources>

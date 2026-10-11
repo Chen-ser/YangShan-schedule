@@ -1,0 +1,61 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    仰山课表 · Windows 壳
+
+    它做的事只有三件，课表内核（dist/仰山课表.html）一行都不用改：
+      1. 用一个没有地址栏的窗口把本地内核显示出来，并把它托到 https://yangshan.local/ 这个
+         虚拟源上 —— file:// 下 Chromium 不给 localStorage，而内核靠 localStorage 存课表。
+      2. 给内核补上浏览器里做不到的两件事：直连学校教务抓数据（在壳里另开一个 WebView2
+         走学校自己的页面，所以没有跨源问题），以及每小时自动刷新。
+      3. 账号密码只走学校自己的登录页，壳只负责把它显示出来并帮你填进去；
+         勾了「记住」才会进 Windows 凭据管理器，不写任何文件。
+
+    构建前先跑 node web/build.mjs 生成 dist/仰山课表.html —— 它会作为 EmbeddedResource
+    打进 exe，所以生成的客户端是自包含的、不依赖任何外部文件。
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <AssemblyName>YangShanShell</AssemblyName>
+    <RootNamespace>YangShan</RootNamespace>
+    <Product>仰山课表</Product>
+    <AssemblyTitle>仰山课表</AssemblyTitle>
+    <Company>YangShan</Company>
+    <Version>0.1.0</Version>
+    <SatelliteResourceLanguages>zh-Hans</SatelliteResourceLanguages>
+
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationDefaultFont>Microsoft YaHei UI, 9pt</ApplicationDefaultFont>
+    <ApplicationUseCompatibleTextRendering>false</ApplicationUseCompatibleTextRendering>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3351.48" />
+  </ItemGroup>
+
+  <!-- 抓取内核：与书签小工具共用同一份（web/build.mjs 也读它） -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\capture.js" LogicalName="capture.js" />
+  </ItemGroup>
+
+  <!-- 壳接口：与安卓壳共用同一份（shells/shim.js） -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\shim.js" LogicalName="shim.js" />
+  </ItemGroup>
+
+  <!--
+    课表内核。用 Exists 包住是必要的：只改 C# 不跑 web 构建时，这个项目照样要能编译。
+    没嵌进去的话，运行时会在 exe 同级目录和仓库的 dist/ 里找。
+  -->
+  <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)..\..\dist\仰山课表.html')">
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)..\..\dist\仰山课表.html" LogicalName="app.html" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#1f6feb">
+<meta name="description" content="北京信息科技大学课表 · 零服务器 · 课表只存在你自己的设备上">
+<!-- iOS「添加到主屏幕」：这几行决定它看起来像一个应用还是一个网页书签 -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="仰山课表">
+<link rel="icon" href="/*{{ICON16}}*/">
+<link rel="apple-touch-icon" href="/*{{ICON180}}*/">
+<!--{{MANIFEST}}-->
+<title>仰山课表 · 北京信息科技大学</title>
+<!-- 单文件应用：所有样式与脚本都在本文件内，不请求任何 CDN。
+     双击用浏览器打开即可使用；放到静态托管上则自动升级为可离线安装的 PWA。 -->
+<style>
+/*{{STYLES}}*/
+</style>
+</head>
+<body>
+
+<div id="app" hidden>
+
+  <header class="topbar">
+    <div class="topbar-main">
+      <div class="brand">仰山课表</div>
+      <div class="sub" id="termLabel">尚未导入课表</div>
+    </div>
+    <div class="topbar-actions">
+      <button class="icon-btn" id="btnSync" title="重新抓取课表">↻</button>
+      <button class="icon-btn" id="btnSettings" title="设置">⚙</button>
+    </div>
+  </header>
+
+  <main id="main">
+
+    <!-- ==================== 周课表 ==================== -->
+    <section class="view" id="view-week">
+      <div class="nowcard" id="nowCard"></div>
+
+      <div class="weekbar">
+        <button class="icon-btn" id="weekPrev" title="上一周">‹</button>
+        <button class="weeklabel" id="weekLabel" title="点这里跳到指定周">
+          <span class="wl-main" id="weekLabelMain">第 1 周</span>
+          <span class="wl-date" id="weekLabelDate">—</span>
+        </button>
+        <button class="icon-btn" id="weekNext" title="下一周">›</button>
+        <button class="ghost-btn" id="weekToday">回到本周</button>
+      </div>
+
+      <div class="grid-wrap">
+        <div class="grid-head" id="gridHead"></div>
+        <div class="grid-body" id="gridBody"></div>
+      </div>
+
+      <div class="legend" id="legend"></div>
+
+      <!-- 未安排时间的课：教务系统把它们放在 notArrangeList 里，
+           不显示的话学生会以为"我这学期就这么点课"。 -->
+      <div id="unscheduled"></div>
+    </section>
+
+    <!-- ==================== 今日 / 逐日 ==================== -->
+    <section class="view" id="view-day" hidden>
+      <div class="datebar">
+        <button class="icon-btn" id="dayPrev">‹</button>
+        <input type="date" id="dayPicker" class="datepicker">
+        <button class="icon-btn" id="dayNext">›</button>
+      </div>
+      <div id="dayList"></div>
+    </section>
+
+    <!-- ==================== 待办 ==================== -->
+    <section class="view" id="view-todo" hidden>
+      <div class="sec-head">
+        <h2>作业与截止</h2>
+        <button class="primary-btn" id="btnAddTodo">+ 添加</button>
+      </div>
+      <div class="hint">
+        微信 / QQ / 学习通里的通知复制过来，粘到下面就能自动识别出截止时间。
+        <button class="link-btn" id="btnParseNotice">粘贴通知文本解析</button>
+      </div>
+      <div id="todoList"></div>
+    </section>
+
+    <!-- ==================== 公告 ==================== -->
+    <section class="view" id="view-ann" hidden>
+      <div class="sec-head">
+        <h2>公告</h2>
+        <button class="ghost-btn" id="btnRefreshAnn">刷新</button>
+      </div>
+      <div id="annList"></div>
+    </section>
+
+    <!-- ==================== 我的 ==================== -->
+    <section class="view" id="view-me" hidden>
+      <div class="card">
+        <h3>导入课表</h3>
+        <p class="muted">课表只存在这台设备上，不上传任何服务器。账号密码永远不离开你的电脑或手机。</p>
+        <div class="btn-row">
+          <button class="primary-btn" id="btnImport">粘贴 / 选择文件导入</button>
+          <button class="ghost-btn" id="btnEditSchedule">编辑课表</button>
+          <button class="ghost-btn" id="btnBookmarklet">抓取工具</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>导出</h3>
+        <div class="btn-row">
+          <button class="ghost-btn" id="btnExportIcs">导出日历 .ics</button>
+          <button class="ghost-btn" id="btnExportBackup">导出备份</button>
+          <button class="ghost-btn" id="btnImportBackup">恢复备份</button>
+          <button class="ghost-btn" id="btnShareCode">生成分享码</button>
+          <button class="ghost-btn" id="btnExportImage">导出课表图片</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>提醒</h3>
+        <label class="row">
+          <span>上课前提醒</span>
+          <select id="setAlarm">
+            <option value="0">不提醒</option>
+            <option value="5">提前 5 分钟</option>
+            <option value="10">提前 10 分钟</option>
+            <option value="15">提前 15 分钟</option>
+            <option value="30">提前 30 分钟</option>
+          </select>
+        </label>
+        <label class="row">
+          <span>作业/网课截止前提醒</span>
+          <select id="setTodoAlarm">
+            <option value="0">不提醒</option>
+            <option value="15">提前 15 分钟</option>
+            <option value="30">提前 30 分钟</option>
+            <option value="60">提前 1 小时</option>
+            <option value="180">提前 3 小时</option>
+            <option value="1440">提前 1 天</option>
+          </select>
+        </label>
+        <label class="row">
+          <span>应用内弹窗提醒</span>
+          <input type="checkbox" id="setInApp">
+        </label>
+        <p class="muted small">
+          系统日历订阅（.ics）自带提醒最可靠。若要应用内提醒，本页面必须开着，
+          手机浏览器不会让网页在后台定时唤醒 —— 这是浏览器的硬限制，不是本应用的缺陷。
+        </p>
+      </div>
+
+      <div class="card">
+        <h3>显示</h3>
+        <label class="row"><span>主题</span>
+          <select id="setTheme">
+            <option value="auto">跟随系统</option>
+            <option value="light">浅色</option>
+            <option value="dark">深色</option>
+          </select>
+        </label>
+        <label class="row"><span>课表字号</span>
+          <input type="range" id="setFont" min="80" max="140" step="5">
+        </label>
+        <label class="row"><span>隐藏周末</span><input type="checkbox" id="setHideWeekend"></label>
+      </div>
+
+      <div class="card">
+        <h3>公告源</h3>
+        <p class="muted small">指向一个 announcements.json 的地址。留空则不显示公告。</p>
+        <input type="url" id="setAnnUrl" class="text-input" placeholder="https://example.com/announcements.json">
+        <div class="btn-row"><button class="ghost-btn" id="btnSaveAnnUrl">保存并刷新</button><button class="ghost-btn" id="btnAnnExample">格式示例</button></div>
+      </div>
+
+      <div class="card danger-card">
+        <h3>清除数据</h3>
+        <p class="muted small">删掉本机保存的课表、待办和设置。清之前建议先导出备份。</p>
+        <div class="btn-row"><button class="danger-btn" id="btnWipe">清除本机全部数据</button></div>
+      </div>
+
+      <div class="card">
+        <h3>关于</h3>
+        <p class="muted small" id="aboutBox"></p>
+      </div>
+    </section>
+
+  </main>
+
+  <nav class="tabbar" id="tabbar">
+    <button data-view="week" class="tab active">课表</button>
+    <button data-view="day" class="tab">逐日</button>
+    <button data-view="todo" class="tab">待办<span class="badge" id="badgeTodo" hidden></span></button>
+    <button data-view="ann" class="tab">公告<span class="badge" id="badgeAnn" hidden></span></button>
+    <button data-view="me" class="tab">我的</button>
+  </nav>
+
+</div>
+
+<!-- ==================== 首次使用引导 ==================== -->
+<div id="onboard" class="modal open">
+  <div class="modal-box onboard-box">
+    <h1>仰山课表</h1>
+    <p class="muted">北京信息科技大学 · 零服务器 · 课表只存在你自己的设备上</p>
+    <ol class="onboard-steps">
+      <li><b>拿到课表数据</b> —— 电脑上用内置浏览器版一键抓取；手机用书签小工具。</li>
+      <li><b>导入</b> —— 粘贴分享码或选择文件。</li>
+      <li><b>订阅日历</b> —— 导出 .ics，上课提醒交给系统日历，最可靠。</li>
+    </ol>
+    <div class="btn-row center">
+      <button class="primary-btn big" id="onboardImport">开始导入课表</button>
+    </div>
+    <p class="muted small center">没有数据也可以先看看界面 —— 会载入一份示例课表。</p>
+    <div class="btn-row center"><button class="link-btn" id="onboardDemo">载入示例课表</button></div>
+  </div>
+</div>
+
+<!-- ==================== 通用模态 ==================== -->
+<div id="modal" class="modal">
+  <div class="modal-box">
+    <div class="modal-head">
+      <h2 id="modalTitle">标题</h2>
+      <button class="icon-btn" id="modalClose">✕</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-foot" id="modalFoot"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<!-- 抓取书签的源码。放在 text/plain 里由脚本读取，避免嵌套引号转义地狱。 -->
+<script type="text/plain" id="bookmarklet-src">/*{{BOOKMARKLET}}*/</script>
+
+<!-- 公告源格式示例：内容来自仓库根目录的 examples/announcements.json（构建时注入）。
+     单一来源 —— 用户就是照抄这份示例去建自己的公告源的，示例和解析器不能各写一份。 -->
+<script type="application/json" id="ann-example">/*{{ANN_EXAMPLE}}*/</script>
+<!--{{OCRLIBS}}-->
+
+<script type="module">
+/*{{CORE}}*/
+/*{{APP}}*/
+</script>
+<!--{{SW}}-->
+</body>
+</html>

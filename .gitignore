@@ -1,0 +1,45 @@
+# 构建产物（由 node web/build.mjs 生成）
+# 单文件版通过 GitHub Releases 发布，托管版由 GitHub Actions 部署到 Pages，
+# 所以仓库里不存 dist/ —— 免得"源码改了但产物没跟着改"引起误会。
+dist/
+
+# 本地真实抓取结果，绝不进仓库（脱敏样本在 test/fixtures/）
+# test/fixtures/pii-denylist.local.json 也吃这条规则 —— 里面装的是脱敏前的真实学号
+# 与真实姓名，是 test/run.mjs 那条 PII 断言的比对黑名单。放进公开仓库等于换个地方泄露。
+*.local.json
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 本项目零依赖，这行只是防御
+node_modules/
+
+*.log
+
+# ── Windows 壳（shells/windows）────────────────────────────────────────────
+# feed/*.nupkg 有 8.6 MB，从 nuget.org 现下即可（node tools/fetch-nupkg.mjs），不进仓库。
+shells/windows/feed/
+shells/windows/bin/
+shells/windows/obj/
+shells/windows/out/
+# 沙箱/受限环境里把 dotnet 的家目录与包缓存重定向到工程内，这些也不是源码。
+shells/windows/.dotnet/
+shells/windows/.nuget/
+# 自检时 --data 指过来的运行目录（里面会落一份 10 MB 的内核副本）。
+shells/windows/_runtime/
+
+# ── 安卓壳（shells/android）────────────────────────────────────────────────
+shells/android/.gradle/
+shells/android/build/
+shells/android/app/build/
+shells/android/local.properties
+shells/android/**/*.apk
+shells/android/**/*.aab
+
+# ── OCR 资产：本地跑 tools/fetch-ocr.mjs 生成，仓库决定提交（见 README）────
+# 若不提交，把下面这行取消注释即可。
+# vendor/ocr/

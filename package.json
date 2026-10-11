@@ -1,0 +1,25 @@
+{
+  "name": "yangshan-schedule",
+  "version": "0.1.0",
+  "private": true,
+  "description": "仰山课表 —— 北京信息科技大学智能课表。零服务器、零成本，课表只存在你自己的设备上。",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node test/run.mjs",
+    "build": "node web/build.mjs",
+    "preview": "node web/preview.mjs",
+    "verify": "node test/run.mjs && node web/build.mjs",
+    "e2e": "node web/build.mjs && node tools/e2e-todos.mjs && node tools/e2e-ann.mjs"
+  },
+  "keywords": [
+    "bistu",
+    "课表",
+    "timetable",
+    "pwa",
+    "ical"
+  ]
+}

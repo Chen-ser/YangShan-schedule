@@ -1,0 +1,6 @@
+# 这三份是 tools/prepare-assets.mjs 从仓库里拷进来的，不入库。
+# 留着这个 .gitignore 是为了让空的 assets/ 目录能被 git 跟踪。
+index.html
+capture.js
+
+!.gitignore
