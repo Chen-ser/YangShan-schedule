@@ -32,6 +32,11 @@ jobs:
         with:
           node-version: 22
 
+      # 密钥/个人信息扫描 —— 这仓库是公开的，一旦推上去历史就抹不掉。
+      # 它自己走目录、不 spawn git（沙箱里 spawnSync 会 EPERM），所以在 CI 上也能跑。
+      - name: 扫描凭据与个人信息
+        run: node tools/check-secrets.mjs
+
       # 测试失败就不发布 —— 课表算错比不更新更糟
       - name: 跑测试
         run: node test/run.mjs

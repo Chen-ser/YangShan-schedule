@@ -381,6 +381,39 @@ node web/preview.mjs path/to/your.json     # 用自己的抓取结果
 # → 生成 dist/_real.html，双击打开
 ```
 
+### 发布
+
+推 `main` 就自动部署：`.github/workflows/pages.yml` 会依次跑**密钥扫描 → 单元测试 → 构建 → 部署 GitHub Pages**，
+任何一步红了都不发布。打 `v*` 标签额外出一个 Release，把 10MB 的单文件版挂上去。
+
+GitHub Pages 的部署源必须是 **GitHub Actions**（不是 "Deploy from a branch"），否则工作流跑完了也不会出现在站点上。
+
+**推之前先扫一遍**，公开仓库推上去历史就抹不掉了：
+
+```bash
+node tools/check-secrets.mjs   # 凭据 / 手机号 / 身份证号 / 疑似真实学号
+```
+
+`test/fixtures/pii-denylist.local.json` 装的是**脱敏前的真实学号与姓名**，是那条 PII 断言的比对黑名单。
+它被 `.gitignore` 挡住、**不进仓库** —— 把黑名单本身抄进公开仓库等于换个地方泄露。该文件不存在时那条断言自动跳过（CI 上就是这种情况）。
+
+### 网络环境注意（本项目踩过的）
+
+这台机器上 **PowerShell / `curl.exe` / git 默认的 schannel 后端都连不上 GitHub**：
+
+```
+schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS (0x8009030e)
+```
+
+git 自带 OpenSSL，切过去就好（仓库级配置里已经设了，所以在这个目录里直接 `git push` 就行）：
+
+```bash
+git config --local http.sslBackend openssl
+```
+
+Node 走自己的 OpenSSL，不受影响 —— 所以一切 GitHub 相关的网络探测都用 Node（`tools/probe-github.mjs`）。
+同样的坑也出现在 `jwxt.bistu.edu.cn` 上，那里是服务端不发中间证书。
+
 ### 测试为什么不用 `node:test`
 
 `test/run.mjs` 是手写的迷你断言器。原因很实际：沙箱环境里 `node --test` 会因为要 spawn 子进程而 `EPERM` 挂掉，直接 `node test/run.mjs` 在进程内跑才是稳的。
@@ -445,9 +478,14 @@ YangShan-schedule/
 │   ├── fetch-ocr.mjs        # 重新抓 OCR 资产（带 sha256 校验）
 │   ├── cdp.mjs              # 开发用 CDP 驱动（截图 / 在真页面里求值，零依赖）
 │   ├── e2e-todos.mjs        # 端到端：加待办 → 导出 .ics → 断言带 VALARM 的截止事件
-│   └── e2e-ann.mjs          # 端到端：本地起静态服务发公告 → 拉取 → 渲染 → 未读角标
+│   ├── e2e-ann.mjs          # 端到端：本地起静态服务发公告 → 拉取 → 渲染 → 未读角标
+│   ├── check-secrets.mjs    # 发布前扫凭据与个人信息（公开仓库的守门人，CI 也跑）
+│   └── probe-github.mjs     # 探测本机能否连 GitHub（这台机器只有 Node/OpenSSL 能连）
+├── push-to-github.cmd       # 首次推送到 GitHub 的引导脚本（纯 ASCII，见文件头注释）
+├── .github/workflows/
+│   └── pages.yml            # 扫密钥 → 跑测试 → 构建 → 部署 Pages → 打 tag 时出 Release
 ├── test/
-│   ├── run.mjs              #   161 个用例（自写迷你断言框架）
+│   ├── run.mjs              #   162 个用例（自写迷你断言框架）
 │   ├── zip.mjs              #   只在测试里用的最小 ZIP 写入器
 │   └── fixtures/            #   脱敏后的真实响应、真实 OOXML 部件、真 tesseract TSV
 └── vendor/ocr/              # tesseract.js + wasm + chi_sim/eng 语言包（已入库）
