@@ -6,6 +6,16 @@
     <!-- 只用来弹「课表已更新」的提示；不给也能用，只是后台刷新完没法告诉你。 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!--
+        公告推送：自己维持一条到 ntfy 的长连接。FCM 在校园网里连不通
+        （实测 fcm.googleapis.com 直连超时），所以只能走前台服务这条路 ——
+        代价是通知栏常驻一条（走最低重要性的独立渠道，可单独静音）。
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- 重启手机后把推送服务拉回来；没有它，用户重启一次就永久收不到了。 -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
     <application
         android:allowBackup="false"
         android:icon="@drawable/ic_launcher"
@@ -37,5 +47,25 @@
             android:exported="false"
             android:label="@string/school_title"
             android:windowSoftInputMode="adjustResize" />
+
+        <!--
+            公告推送。前台服务而不是 WorkManager：WorkManager 最快 15 分钟一轮，
+            公告这种东西晚一刻钟就失去意义了。dataSync 是它实际在做的事
+            （持续接收网络数据），也是 Android 14 起唯一说得通的那个类型。
+        -->
+        <service
+            android:name=".AnnPushService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

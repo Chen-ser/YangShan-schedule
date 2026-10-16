@@ -24,6 +24,7 @@ class ShellBridge(private val host: Host) {
         fun onForget(id: String)
         fun onNotify(title: String?, body: String?)
         fun onOpen(url: String?)
+        fun onAnnPush(topic: String?, annUrl: String?, base: String?)
     }
 
     @JavascriptInterface
@@ -45,6 +46,12 @@ class ShellBridge(private val host: Host) {
             "forget" -> host.onForget(id)
             "notify" -> host.onNotify(m.stringOrNull("title"), m.stringOrNull("body"))
             "open" -> host.onOpen(m.stringOrNull("url"))
+            // 没有回包：这是单向的设置下发。成功与否由 status 的 annPush 字段反映。
+            "annpush" -> host.onAnnPush(
+                m.stringOrNull("topic"),
+                m.stringOrNull("annUrl"),
+                m.stringOrNull("base"),
+            )
         }
     }
 }

@@ -74,6 +74,13 @@
     status: function () { return call('status'); },
     forget: function () { return call('forget'); },
     notify: function (title, body) { post({ cmd: 'notify', title: title, body: body }); },
-    openExternal: function (url) { post({ cmd: 'open', url: url }); }
+    openExternal: function (url) { post({ cmd: 'open', url: url }); },
+    // 把公告频道交给原生侧，让它在 App 关掉之后也能收。
+    // 单向、不回包：前台服务是异步起来的，此刻回“成功”是不诚实 ——
+    // 真实状态由 status() 的 annPush 字段说话。
+    // Windows 壳不认这条命令，会直接忽略（它没有后台推送这件事）。
+    setAnnPush: function (topic, annUrl, base) {
+      post({ cmd: 'annpush', topic: topic || '', annUrl: annUrl || '', base: base || '' });
+    }
   };
 })();

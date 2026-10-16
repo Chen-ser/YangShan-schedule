@@ -714,6 +714,50 @@ function subscribeAnnouncePush() {
   });
 }
 
+/**
+ * 把公告频道交给原生壳，让它在 **App 关掉之后** 也能收。
+ *
+ * 上面那条 EventSource 只在页面活着时有效 —— 手机锁屏、切走、从最近任务里划掉，
+ * 页面就没了。真正「关掉也能收到」靠的是安卓壳里的前台服务。
+ * 这里只负责把频道名与公告地址下发过去。
+ *
+ * 纯网页环境（浏览器直接打开）与 Windows 壳没有 setAnnPush，静默跳过 ——
+ * 它们本来就只在打开时收得到，这是同一个事实的两种表现。
+ */
+function pushAnnToShell() {
+  const shell = globalThis.YangShanShell;
+  if (!shell || typeof shell.setAnnPush !== 'function') return;
+  const { annTopic, annUrl } = state.settings;
+  try {
+    shell.setAnnPush(String(annTopic ?? '').trim(), String(annUrl ?? '').trim(), NTFY_BASE);
+  } catch (e) {
+    console.warn('下发推送配置失败', e);
+  }
+}
+
+/**
+ * 原生侧的后台推送到底起来了没有：true / false；纯网页环境保持 null（没有这回事）。
+ */
+let shellAnnPush = null;
+
+/**
+ * 问一次原生壳。
+ *
+ * 下发配置是单向的，所以「到底起没起来」只能靠这条 status 回包 ——
+ * 用户以为开了、其实没开，是最糟的那种状态，界面必须如实说。
+ */
+async function refreshShellAnnPush() {
+  const shell = globalThis.YangShanShell;
+  if (!shell || typeof shell.status !== 'function') return;
+  try {
+    const pack = await shell.status();
+    shellAnnPush = Boolean(pack && pack.annPush);
+  } catch (e) {
+    shellAnnPush = false;
+  }
+  renderAnnSrcStatus();
+}
+
 // ---------------------------------------------------------------- 本机私公告
 
 /** 手填一条只在本机生效的公告。 */
@@ -782,6 +826,9 @@ function renderAnnSrcStatus() {
   else parts.push('⚠️ 只有推送频道，没有公告地址');
   if (annTopic) parts.push(`推送频道 ${annTopic}`);
   else parts.push('没有推送频道（只有轮询）');
+  // 只有原生壳（安卓）才有「后台推送」这件事。null = 跑在浏览器里，不用提。
+  if (shellAnnPush === true) parts.push('后台推送已开启（关掉 App 也能收到）');
+  else if (shellAnnPush === false && annTopic) parts.push('⚠️ 后台推送没起来，重开一次 App');
   const at = state.announcementsFetchedAt;
   parts.push(at ? `上次拉到 ${new Date(at).toLocaleString()}` : '还没成功拉到过');
   el.textContent = parts.join(' · ');
@@ -1840,6 +1887,7 @@ function bindSettings() {
     saveState();
     renderAnnSrcStatus();
     subscribeAnnouncePush();
+    pushAnnToShell();
     refreshAnnouncements().then(() => renderAnnouncements());
   });
   $('btnAnnExample').addEventListener('click', modalAnnExample);
@@ -1894,6 +1942,7 @@ function bindSettings() {
           renderAll();
           applySettings();
           subscribeAnnouncePush(); // 频道设置也没了，把订阅一起断掉
+          pushAnnToShell();        // 原生侧那前台服务也要停，否则它会一直挂着
           toast('已清除');
           return true;
         },
@@ -2208,6 +2257,10 @@ async function main() {
   // 不如把"切回来的那一刻"当成可靠的刷新时机。
   if (state.settings.annUrl) refreshAnnouncements(true);
   subscribeAnnouncePush();
+  // 把频道下发到原生侧（安卓壳会据此起一个前台服务，关掉 App 也收得到），
+  // 再回读一次它到底起没起来。
+  pushAnnToShell();
+  refreshShellAnnPush();
   setInterval(() => {
     if (document.visibilityState === 'visible') refreshAnnouncements(true);
   }, 15 * 60 * 1000);

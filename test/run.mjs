@@ -137,6 +137,69 @@ t('网页同步按钮在原生壳中调用真实刷新接口', () => {
   ok(src.includes('刷新失败：'), '同步失败应给出可见提示');
 });
 
+// ---------------------------------------------------------------- 后台推送（安卓）
+// 这一组盯的是「App 关掉之后还能收到公告」那条链路。它跨了三个文件：
+// shells/shim.js（网页→壳的命令名）、ShellBridge.kt（壳收哪条命令）、
+// MainActivity.kt + AnnPushService.kt（真正去起前台服务）。
+// 任何一处改了名字，推送就**静默失效** —— 属于「平时完全看不出来、
+// 真发公告时才发现全班收不到」的那类故障，所以值得钉住。
+
+t('后台推送的命令名在网页端与安卓壳之间必须一致', () => {
+  const shim = readFileSync(join(ROOT, 'shells/shim.js'), 'utf8');
+  const bridge = readFileSync(
+    join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/ShellBridge.kt'),
+    'utf8',
+  );
+  ok(shim.includes("cmd: 'annpush'"), "shim 必须下发 cmd: 'annpush'");
+  ok(shim.includes('setAnnPush'), 'shim 必须把 setAnnPush 暴露给内核');
+  ok(bridge.includes('"annpush" ->'), 'ShellBridge 必须处理 annpush');
+  ok(bridge.includes('onAnnPush'), 'ShellBridge 必须把它交给宿主');
+});
+
+t('安卓壳必须声明公告推送的前台服务与开机恢复', () => {
+  const mf = readFileSync(
+    join(ROOT, 'shells/android/app/src/main/AndroidManifest.xml'),
+    'utf8',
+  );
+  ok(mf.includes('android.permission.FOREGROUND_SERVICE'), '必须申请前台服务权限');
+  ok(mf.includes('FOREGROUND_SERVICE_DATA_SYNC'), 'Android 14 起前台服务要按类型再申请一次');
+  ok(
+    mf.includes('android:foregroundServiceType="dataSync"'),
+    '服务本体必须声明 dataSync 类型（不声明在 Android 14 上会直接崩）',
+  );
+  ok(mf.includes('.AnnPushService'), '必须注册推送服务');
+  ok(mf.includes('.BootReceiver'), '必须注册开机恢复接收器');
+  ok(mf.includes('android.intent.action.BOOT_COMPLETED'), '重启后要能把服务拉回来');
+  ok(mf.includes('android.permission.RECEIVE_BOOT_COMPLETED'), '接收 BOOT_COMPLETED 需要权限');
+});
+
+t('后台推送由网页端配置驱动，且状态如实回读', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  ok(app.includes('shell.setAnnPush('), '网页端必须把频道下发给壳');
+  ok(app.includes('pushAnnToShell()'), '保存公告源与启动时都要下发');
+  ok(app.includes('refreshShellAnnPush'), '必须回读服务是否真的起来了');
+  ok(app.includes('后台推送已开启'), '界面要如实显示后台推送状态');
+});
+
+t('推送载荷一律不可信：通知正文只能来自公告 JSON', () => {
+  const svc = readFileSync(
+    join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/AnnPushService.kt'),
+    'utf8',
+  );
+  ok(svc.includes('START_STICKY'), '被系统杀掉后必须能自动拉回来');
+  ok(svc.includes('"message"'), '只认 ntfy 的 message 事件');
+  ok(
+    svc.includes('optString("event") == "message"'),
+    '必须判 JSON 里的 event 字段 —— 建立连接时那声 open 不能被当成公告',
+  );
+  ok(
+    svc.includes('AnnPush.annUrl('),
+    '通知正文必须来自公告 JSON，绝不能直接用推送载荷里的文字',
+  );
+  ok(svc.includes('lastId'), '同一条公告只弹一次，重连不能重复打扰');
+  ok(svc.includes('appVisible'), 'App 在前台时让位给网页端，避免弹两条');
+});
+
 // ================================================================ 0. 浏览器安全
 // 这是把核心从"只能在 Node 跑"改造成"四端共用"之后必须守住的一条线：
 // 核心文件里一旦出现 node:crypto / Buffer / process，打包进网页后浏览器直接崩。

@@ -81,6 +81,22 @@ class MainActivity : Activity(), ShellBridge.Host {
         web.loadUrl(ENTRY_URL)
 
         AutoRefresh.schedule(this)
+
+        // 服务可能被系统杀过（省电、内存），这里按已存的配置把它恢复回来。
+        // 没配过频道时 AnnPush.apply 什么也不做。
+        AnnPush.apply(this)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 前台时网页端自己会弹通知（点了还能直接跳到那条公告），
+        // 告诉服务别重复弹。
+        AnnPush.appVisible = true
+    }
+
+    override fun onPause() {
+        AnnPush.appVisible = false
+        super.onPause()
     }
 
     // ── 内核 → 壳的请求（ShellBridge.Host）────────────────────────────────────
@@ -126,6 +142,8 @@ class MainActivity : Activity(), ShellBridge.Host {
                 .put("remembered", creds != null)
                 .put("autoRefresh", true)
                 .put("autoRefreshMinutes", 60)
+                // 关掉 App 也能收到公告 —— 由前台服务维持一条到 ntfy 的长连接。
+                .put("annPush", AnnPush.enabled(this) && AnnPushService.active)
             if (creds != null) status.put("username", creds.first) else status.put("username", JSONObject.NULL)
             val payload = JSONObject()
                 .put("id", id)
@@ -147,6 +165,21 @@ class MainActivity : Activity(), ShellBridge.Host {
 
     override fun onOpen(url: String?) {
         if (!url.isNullOrBlank()) open(url)
+    }
+
+    /**
+     * 网页端保存「公告源」时把频道名与公告地址送过来。
+     *
+     * 单向：不回包。成功与否由下一次 `status` 的 `annPush` 字段说话 ——
+     * 前台服务是异步起来的，此刻回「成功」是不诚实。
+     */
+    override fun onAnnPush(topic: String?, annUrl: String?, base: String?) {
+        val t = topic.orEmpty().trim()
+        if (t.isBlank()) {
+            AnnPush.clear(this)
+            return
+        }
+        AnnPush.save(this, t, annUrl.orEmpty(), base.orEmpty())
     }
 
     // ── 抓取回来的路上 ──────────────────────────────────────────────────────
