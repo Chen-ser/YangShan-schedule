@@ -16,6 +16,7 @@ import { readFileSync, writeFileSync, mkdirSync, rmSync, copyFileSync } from 'no
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
+import { createHash } from 'node:crypto';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
@@ -325,8 +326,14 @@ function build() {
     ],
   };
 
-  const swSrc = `// 仰山课表 Service Worker —— 只做一件事：让断网时也能打开。
-const CACHE = 'yangshan-${VERSION}';
+  // 缓存名里带内容指纹，这个文件才有「版本」可言。
+  //
+  // 原来缓存名只有 VERSION（0.1.0），sw.js 的内容就一字不变 —— 浏览器比对到
+  // 字节相同，连装都不装，addAll 不重跑、旧缓存不删，老用户永远从旧缓存里读旧页面。
+  // 公告功能做得再全也发不到已经装过的人手上。指纹由页面内容算出，内容一变就变。
+  const swSrc = (fp) => `// 仰山课表 Service Worker —— 只做两件事：断网也能打开；公告源永不被冻住。
+// 内容指纹 ${fp}：页面一变这个文件就变，浏览器才会装新 SW、填新缓存、删旧缓存。
+const CACHE = 'yangshan-${VERSION}-${fp}';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {
@@ -345,7 +352,21 @@ self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  if (url.origin !== location.origin) return; // 公告源等其他域一律走网络，不缓存
+  if (url.origin !== location.origin) return; // 别的域的公告源一律走网络，不缓存
+
+  // 公告源必须先回源。它按设计就是要随时变的，一旦被缓存优先命中就等于把公告冻住 ——
+  // 管理员改了 JSON，全班还在看几个月前那份。断网时才退回上次拿到的副本。
+  if (url.pathname.includes('/data/')) {
+    e.respondWith(
+      fetch(req).then((res) => {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+        return res;
+      }).catch(() => caches.match(req)),
+    );
+    return;
+  }
+
   e.respondWith(
     caches.match(req).then((hit) => hit || fetch(req).then((res) => {
       const copy = res.clone();
@@ -430,11 +451,21 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   });
   writeFileSync(join(DIST, 'site', 'index.html'), site, 'utf8');
   writeFileSync(join(DIST, 'site', 'manifest.webmanifest'), JSON.stringify(manifest, null, 2), 'utf8');
-  writeFileSync(join(DIST, 'site', 'sw.js'), swSrc, 'utf8');
   for (const [s, buf] of Object.entries(icons)) {
     writeFileSync(join(DIST, 'site', 'icons', `icon-${s}.png`), buf);
   }
   writeFileSync(join(DIST, 'site', '.nojekyll'), '', 'utf8');
+
+  // 指纹要覆盖 SW 真正缓存的那几样：页面、manifest、图标。
+  // 只认内容，所以内容没变的重复构建不会白白让所有人重下一遍。
+  const siteFp = createHash('sha256')
+    .update(site)
+    .update(JSON.stringify(manifest))
+    .update(icons['192'])
+    .update(icons['512'])
+    .digest('hex')
+    .slice(0, 12);
+  writeFileSync(join(DIST, 'site', 'sw.js'), swSrc(siteFp), 'utf8');
 
   // --- 托管版的 OCR 资产：外置，按需取，取过就被 Service Worker 缓存住
   mkdirSync(join(DIST, 'site', 'ocr'), { recursive: true });

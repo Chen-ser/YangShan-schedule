@@ -84,6 +84,32 @@ t('品牌资源会注入页面模板', () => {
   ok(build.includes("about-contact.jpg"), '构建脚本读取关于页图片');
 });
 
+// Service Worker 坏了最难发现：页面上什么都对，只有「已经装过的人」永远看不到新版。
+// 缓存名曾经只带版本号（0.1.0），于是 sw.js 一字不变，浏览器比对到字节相同就不装新 SW，
+// addAll 不重跑、旧缓存不删 —— 公告功能做得再好也发不到老用户手上。
+t('Service Worker 的缓存名带内容指纹，新内容能顶掉旧缓存', () => {
+  const build = readFileSync(join(ROOT, 'web/build.mjs'), 'utf8');
+  ok(build.includes('const swSrc = (fp) =>'), 'sw.js 的内容必须由指纹参与生成');
+  ok(build.includes("createHash('sha256')"), '指纹必须来自内容哈希');
+  ok(build.includes("CACHE = 'yangshan-${VERSION}-${fp}'"), '缓存名必须同时带版本与内容指纹');
+  ok(!build.includes("CACHE = 'yangshan-${VERSION}'"), '缓存名不能只有版本号，否则内容变了老用户也拿不到');
+  ok(
+    build.includes('keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))'),
+    '换缓存名后必须把旧缓存删掉',
+  );
+});
+
+// 公告源按设计就是要随时变的。缓存优先一旦命中，管理员改了 JSON 全班还在看旧的，
+// 而且「我明明发了」和「同学说没看到」会在两边同时成立，极难排查。
+t('Service Worker 不会把公告源缓存成死数据', () => {
+  const build = readFileSync(join(ROOT, 'web/build.mjs'), 'utf8');
+  const dataBranch = build.indexOf("url.pathname.includes('/data/')");
+  const cacheFirst = build.indexOf('caches.match(req).then((hit) => hit ||');
+  ok(dataBranch > 0, '公告源必须单独走「先回源」的分支');
+  ok(cacheFirst > 0, '其余资源仍然走缓存优先');
+  ok(dataBranch < cacheFirst, '/data/ 的分支必须在缓存优先那条 return 之前返回');
+});
+
 t('Windows 壳状态与刷新回包不能丢失真实状态', () => {
   const src = readFileSync(join(ROOT, 'shells/windows/MainForm.cs'), 'utf8');
   ok(src.includes('hasSchedule,') || src.includes('hasSchedule ='), 'Windows 状态应探测页面中的真实课表状态');
