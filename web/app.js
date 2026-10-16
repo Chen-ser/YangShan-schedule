@@ -18,6 +18,10 @@ const DEFAULT_SETTINGS = {
   font: 100,
   hideWeekend: false,
   annUrl: '',
+  // ntfy 频道名，来自「公告分享码」。空则只定时轮询、不订阅推送。
+  annTopic: '',
+  // 收到新公告时弹不弹系统通知（默认关：未经用户同意就弹窗是很讨嫌的行为）
+  annNotify: false,
 };
 
 // ================================================================ 工具
@@ -100,6 +104,8 @@ let state = {
   todos: [],
   readAnnouncements: [],
   announcements: [],
+  // 只在本机生效的私公告（导入的文件 / 手填的表单）。永远不上传，也永远不参与分享。
+  localAnnouncements: [],
   announcementsFetchedAt: '',
   settings: { ...DEFAULT_SETTINGS },
 };
@@ -120,6 +126,7 @@ function loadState() {
       todos: Array.isArray(o.todos) ? o.todos : [],
       readAnnouncements: Array.isArray(o.readAnnouncements) ? o.readAnnouncements : [],
       announcements: Array.isArray(o.announcements) ? o.announcements : [],
+      localAnnouncements: Array.isArray(o.localAnnouncements) ? o.localAnnouncements : [],
       announcementsFetchedAt: o.announcementsFetchedAt ?? '',
       settings: { ...DEFAULT_SETTINGS, ...(o.settings ?? {}) },
     };
@@ -546,16 +553,21 @@ function modalParseNotice() {
 
 // ================================================================ 公告
 
+/** 共享公告 + 本机私公告，合并后就是界面上真正看到的全部。 */
+function annAll() {
+  return mergeAnnouncements(state.announcements, state.localAnnouncements);
+}
+
 function renderAnnouncements() {
   const box = $('annList');
   box.replaceChildren();
-  const list = state.announcements;
+  const list = annAll();
 
   if (!list.length) {
     box.append(h('div', { class: 'empty' }, h('b', {}, '暂时没有公告'),
-      state.settings.annUrl
-        ? '公告源没有返回内容，或者网络不通。'
-        : '还没设置公告源。到「我的 → 公告源」填一个 announcements.json 的地址。'));
+      !state.settings.annUrl
+        ? '还没设置公告源。到「我的 → 公告源」粘贴班级里发的那串分享码。'
+        : '公告源没有返回内容，或者网络不通。'));
     return;
   }
 
@@ -568,6 +580,8 @@ function renderAnnouncements() {
       },
         h('div', { class: 'ah' },
           a.pinned ? h('span', { class: 'pin-tag' }, '置顶') : null,
+          // 来源必须标出来：共享公告和私公告混在一列里，不标就分不清哪条是自己加的
+          a.source === 'local' ? h('span', { class: 'src-tag' }, '本机') : null,
           h('b', {}, a.title),
           h('time', {}, a.date)),
         h('div', { class: 'ab' }, h('div', { html: miniMarkdown(a.body) })),
@@ -587,8 +601,23 @@ function modalAnnouncement(a) {
   }
   const body = [h('div', {}, h('div', { html: miniMarkdown(a.body) }))];
   if (a.link) body.push(h('p', {}, h('a', { href: a.link, target: '_blank', rel: 'noopener' }, '相关链接')));
-  body.push(h('p', { class: 'muted small' }, a.date));
-  openModal(a.title, body, []);
+  body.push(h('p', { class: 'muted small' },
+    a.source === 'local' ? `${a.date} · 只在本机，不会同步给任何人` : a.date));
+
+  const actions = [];
+  if (a.source === 'local') {
+    actions.push({
+      label: '删除这条', class: 'danger-btn',
+      onClick: () => {
+        state.localAnnouncements = state.localAnnouncements.filter((x) => x.id !== a.id);
+        saveState();
+        renderAll();
+        toast('已删除本机公告');
+        return true;
+      },
+    });
+  }
+  openModal(a.title, body, actions);
 }
 
 async function refreshAnnouncements(quiet = false) {
@@ -601,16 +630,168 @@ async function refreshAnnouncements(quiet = false) {
     const res = await fetch(url, { cache: 'no-cache' });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
+    const before = new Set(state.announcements.map((a) => String(a.id)));
     state.announcements = normalizeAnnouncements(data);
     state.announcementsFetchedAt = new Date().toISOString();
     saveState();
+    // 设置页那行状态要跟着走：不重画的话，保存后它永远停在「还没成功拉到过」，
+    // 用户看不出到底通没通（实测踩过）。
+    renderAnnSrcStatus();
     if (ui.view === 'ann') renderAnnouncements();
     updateBadges();
-    if (!quiet) toast(`公告已更新（${state.announcements.length} 条）`);
+    if (!quiet) toast(`公告已更新（${annAll().length} 条）`);
+    // 首次拉取（before 为空）不弹通知 —— 否则刚装上应用就被历史公告刷屏。
+    // 之后每次发现新 id 才弹。
+    if (before.size) {
+      const fresh = state.announcements.filter((a) => !before.has(String(a.id)));
+      if (fresh.length) notifyNewAnnouncements(fresh);
+    }
   } catch (e) {
     if (!quiet) toast('公告拉取失败：' + e.message);
     console.warn('公告拉取失败', e);
   }
+}
+
+/** 新公告 → 系统通知。没给权限就静默跳过，角标照常更新。 */
+function notifyNewAnnouncements(fresh) {
+  if (!state.settings.annNotify) return;
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  for (const a of fresh.slice(0, 3)) {
+    try {
+      const n = new Notification(a.title, {
+        body: String(a.body || '').replace(/[*#>`_\-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120),
+        tag: 'ys-ann-' + a.id,
+      });
+      n.onclick = () => {
+        window.focus();
+        if (ui.view !== 'ann') switchView('ann');
+        modalAnnouncement(a);
+      };
+    } catch (e) {
+      console.warn('系统通知失败', e);
+    }
+  }
+}
+
+// ---------------------------------------------------------------- 推送订阅
+
+let annSse = null;    // 当前的 EventSource
+let annSseTries = 0;  // 连续失败次数，用来退避
+
+/**
+ * 订阅 ntfy 频道，只为「响一声」。
+ *
+ * ★ 这里是整套推送的安全支点：ntfy 消息**绝不携带公告内容**，收到什么都只是
+ * 去重新拉一遍 announcements.json。所以就算频道名泄露、有人往频道里灌假消息，
+ * 也只能让用户多刷一次公告，注入不了任何文字 —— 公告内容的唯一来源永远是那个 JSON。
+ */
+function subscribeAnnouncePush() {
+  const topic = String(state.settings.annTopic ?? '').trim();
+  if (annSse) { try { annSse.close(); } catch { /* 已经关了 */ } annSse = null; }
+  if (!topic || !TOPIC_RE.test(topic)) return;
+  if (typeof EventSource === 'undefined') return; // file:// 或老浏览器：只靠轮询
+
+  let es;
+  try {
+    es = new EventSource(ntfySseUrl(topic));
+  } catch (e) {
+    console.warn('订阅推送失败', e);
+    return;
+  }
+  annSse = es;
+
+  es.addEventListener('open', () => { annSseTries = 0; });
+  es.addEventListener('message', () => refreshAnnouncements(true));
+  es.addEventListener('error', () => {
+    // EventSource 自带重连，但断网时会疯狂重试 —— 自己接管，做指数退避
+    try { es.close(); } catch { /* 忽略 */ }
+    if (annSse === es) annSse = null;
+    annSseTries = Math.min(annSseTries + 1, 6);
+    const delay = Math.min(30000, 2000 * 2 ** (annSseTries - 1));
+    setTimeout(() => {
+      if (!annSse && state.settings.annTopic) subscribeAnnouncePush();
+    }, delay);
+  });
+}
+
+// ---------------------------------------------------------------- 本机私公告
+
+/** 手填一条只在本机生效的公告。 */
+function modalAddLocalAnn() {
+  const today = todayISO();
+  const fTitle = h('input', { type: 'text', placeholder: '例如：把这周的实验报告交了' });
+  const fDate = h('input', { type: 'date', value: today });
+  const fBody = h('textarea', { rows: 4, placeholder: '支持 **加粗**、- 列表、换行' });
+  openModal('加一条本机公告', [
+    h('p', { class: 'muted small' }, '只存在这台设备上，不会上传、也不会分享给别人。'),
+    h('label', { class: 'row' }, h('span', {}, '标题'), fTitle),
+    h('label', { class: 'row' }, h('span', {}, '日期'), fDate),
+    h('label', { class: 'row' }, h('span', {}, '正文'), fBody),
+  ], [
+    { label: '取消', class: 'ghost-btn' },
+    {
+      label: '保存', class: 'btn',
+      onClick: () => {
+        const title = fTitle.value.trim();
+        const body = fBody.value.trim();
+        if (!title && !body) { toast('标题和正文至少要有一个'); return false; }
+        const local = normalizeAnnouncements(
+          [{ id: `local-${Date.now()}`, title, date: fDate.value || today, body, level: 'info' }],
+          { source: 'local' },
+        );
+        state.localAnnouncements = mergeAnnouncements(state.localAnnouncements, local);
+        saveState();
+        renderAll();
+        toast('已加入本机公告');
+        return true;
+      },
+    },
+  ]);
+}
+
+/** 从 JSON 文件导入公告到本机（只在本机生效）。 */
+async function importLocalAnnouncements(file) {
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    const list = normalizeAnnouncements(data, { source: 'local' });
+    if (!list.length) { toast('这个文件里没有可用的公告'); return; }
+    // 导入的东西 id 可能和管理员发的撞车 —— 统一加前缀。
+    // 不加的话，本地优先规则会让它悄悄顶掉一条共享公告，用户完全看不出为什么。
+    const stamped = list.map((a) => ({ ...a, id: `local-${a.id}` }));
+    state.localAnnouncements = mergeAnnouncements(state.localAnnouncements, stamped);
+    saveState();
+    renderAll();
+    toast(`已导入 ${stamped.length} 条本机公告`);
+  } catch (e) {
+    toast('导入失败：' + e.message);
+  }
+}
+
+/** 把公告源当前状态写到设置页上 —— 「到底设上没有、上次什么时候拉到的」要能一眼看到。 */
+function renderAnnSrcStatus() {
+  const el = $('annSrcStatus');
+  if (!el) return;
+  const { annUrl, annTopic } = state.settings;
+  if (!annUrl && !annTopic) {
+    el.textContent = '还没设置。';
+    return;
+  }
+  const parts = [];
+  if (annUrl) parts.push('公告地址已设置');
+  else parts.push('⚠️ 只有推送频道，没有公告地址');
+  if (annTopic) parts.push(`推送频道 ${annTopic}`);
+  else parts.push('没有推送频道（只有轮询）');
+  const at = state.announcementsFetchedAt;
+  parts.push(at ? `上次拉到 ${new Date(at).toLocaleString()}` : '还没成功拉到过');
+  el.textContent = parts.join(' · ');
+}
+
+function renderLocalCount() {
+  const el = $('localAnnCount');
+  if (!el) return;
+  const n = state.localAnnouncements.length;
+  el.textContent = n ? `当前有 ${n} 条本机公告。` : '当前没有本机公告。';
 }
 
 function updateBadges() {
@@ -1646,11 +1827,58 @@ function bindSettings() {
   $('setFont').addEventListener('input', (e) => { st().font = Number(e.target.value); saveState(); applySettings(); });
   $('setHideWeekend').addEventListener('change', (e) => { st().hideWeekend = e.target.checked; saveState(); renderWeek(); });
   $('btnSaveAnnUrl').addEventListener('click', () => {
-    st().annUrl = $('setAnnUrl').value.trim();
+    const raw = $('setAnnUrl').value.trim();
+    let parsed;
+    try {
+      parsed = parseAnnConfig(raw);
+    } catch (e) {
+      toast('解析失败：' + e.message);
+      return;
+    }
+    st().annUrl = parsed.url;
+    st().annTopic = parsed.topic || '';
     saveState();
+    renderAnnSrcStatus();
+    subscribeAnnouncePush();
     refreshAnnouncements().then(() => renderAnnouncements());
   });
   $('btnAnnExample').addEventListener('click', modalAnnExample);
+
+  $('setAnnNotify').addEventListener('change', async (e) => {
+    if (e.target.checked && typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
+      const p = await Notification.requestPermission();
+      if (p !== 'granted') { e.target.checked = false; toast('浏览器拒绝了通知权限'); return; }
+    }
+    st().annNotify = e.target.checked;
+    saveState();
+  });
+  $('btnTestAnnPush').addEventListener('click', () => {
+    if (typeof Notification === 'undefined') { toast('这个浏览器不支持系统通知'); return; }
+    if (Notification.permission !== 'granted') { toast('先打开上面的「弹系统通知」并允许权限'); return; }
+    try {
+      new Notification('仰山课表 · 测试通知', { body: '看到这条说明通知是通的。' });
+      toast('已发出');
+    } catch (e) {
+      toast('发送失败：' + e.message);
+    }
+  });
+
+  $('btnAddLocalAnn').addEventListener('click', modalAddLocalAnn);
+  $('btnImportLocalAnn').addEventListener('click', () => $('fileLocalAnn').click());
+  $('fileLocalAnn').addEventListener('change', async (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = ''; // 同一个文件连选两次也要能触发
+    if (f) await importLocalAnnouncements(f);
+    renderLocalCount();
+  });
+  $('btnClearLocalAnn').addEventListener('click', () => {
+    if (!state.localAnnouncements.length) { toast('本来就没有'); return; }
+    if (!confirm(`删除全部 ${state.localAnnouncements.length} 条本机公告？`)) return;
+    state.localAnnouncements = [];
+    saveState();
+    renderAll();
+    toast('已清除');
+  });
 
   $('btnWipe').addEventListener('click', () => {
     openModal('确认清除', [
@@ -1661,10 +1889,11 @@ function bindSettings() {
       {
         label: '确认清除', class: 'danger-btn',
         onClick: () => {
-          state = { schedule: null, todos: [], readAnnouncements: [], announcements: [], announcementsFetchedAt: '', settings: { ...DEFAULT_SETTINGS } };
+          state = { schedule: null, todos: [], readAnnouncements: [], announcements: [], localAnnouncements: [], announcementsFetchedAt: '', settings: { ...DEFAULT_SETTINGS } };
           saveState();
           renderAll();
           applySettings();
+          subscribeAnnouncePush(); // 频道设置也没了，把订阅一起断掉
           toast('已清除');
           return true;
         },
@@ -1680,6 +1909,9 @@ function bindSettings() {
   $('setFont').value = String(st().font);
   $('setHideWeekend').checked = st().hideWeekend;
   $('setAnnUrl').value = st().annUrl ?? '';
+  $('setAnnNotify').checked = Boolean(st().annNotify);
+  renderAnnSrcStatus();
+  renderLocalCount();
 }
 
 // ================================================================ 周次选择
@@ -1975,6 +2207,7 @@ async function main() {
   // 页面在后台时不轮询 —— 手机浏览器本来就会冻结后台定时器，与其指望它，
   // 不如把"切回来的那一刻"当成可靠的刷新时机。
   if (state.settings.annUrl) refreshAnnouncements(true);
+  subscribeAnnouncePush();
   setInterval(() => {
     if (document.visibilityState === 'visible') refreshAnnouncements(true);
   }, 15 * 60 * 1000);
@@ -1983,6 +2216,8 @@ async function main() {
     renderNowCard();
     checkReminders();
     refreshAnnouncements(true);
+    // 手机浏览器在后台会掐掉 SSE，切回来的这一刻顺手确认还连着
+    if (state.settings.annTopic && !annSse) subscribeAnnouncePush();
   });
 
   setInterval(() => { renderNowCard(); checkReminders(); }, 60 * 1000);

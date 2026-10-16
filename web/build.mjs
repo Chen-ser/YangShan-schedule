@@ -445,12 +445,35 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     copyFileSync(join(ROOT, 'vendor', 'ocr', file), join(DIST, 'site', 'ocr', file));
   }
 
+  // --- 公告管理页（只进托管版：它要调 GitHub API，file:// 下没有 origin 可谈）
+  //
+  // 和主应用共用同一份 core —— 分享码的编解码只有一套实现，
+  // 管理页算出来的分享码和应用解析出来的必然是同一个格式。
+  const adminSrc = stripModuleSyntax(read('web', 'admin', 'admin.js'));
+  assertBrowserSafe(coreSrc + '\n' + adminSrc, 'admin');
+  assertNoDuplicates(coreSrc + '\n' + adminSrc, 'admin bundle');
+  const adminHtml = read('web', 'admin', 'template.html')
+    .replace('/*{{STYLES}}*/', () => read('web', 'admin', 'admin.css'))
+    .replace('/*{{CORE}}*/', () => coreSrc)
+    .replace('/*{{ADMIN}}*/', () => adminSrc)
+    .replace(/__VERSION__/g, VERSION);
+  if (adminHtml.includes('/*{{')) throw new Error('管理页还有没被替换的占位符');
+  mkdirSync(join(DIST, 'site', 'admin'), { recursive: true });
+  writeFileSync(join(DIST, 'site', 'admin', 'index.html'), adminHtml, 'utf8');
+
+  // --- 公告权威源：原样复制到站点。
+  // 应用端读的就是这一份；管理页改的是仓库里的那一份，构建时同步过来。
+  mkdirSync(join(DIST, 'site', 'data'), { recursive: true });
+  const annSeed = readFileSync(join(ROOT, 'data', 'announcements.json'), 'utf8');
+  JSON.parse(annSeed); // 别把坏掉的 JSON 发到线上
+  writeFileSync(join(DIST, 'site', 'data', 'announcements.json'), annSeed, 'utf8');
+
   // --- 书签
   const bmUrl = 'javascript:' + encodeURIComponent(bookmarklet);
   writeFileSync(join(DIST, 'bookmarklet.txt'), bmUrl, 'utf8');
   writeFileSync(join(DIST, 'bookmarklet.source.js'), bookmarklet + '\n', 'utf8');
 
-  return { single, site, bmUrl };
+  return { single, site, bmUrl, adminHtml };
 }
 
 const out = build();
@@ -459,6 +482,7 @@ const kb = (s) => (Buffer.byteLength(s, 'utf8') / 1024).toFixed(1) + ' KB';
 console.log(`✓ 构建完成 v${VERSION}`);
 console.log(`  dist/仰山课表.html         ${kb(out.single)}   单文件，双击即用`);
 console.log(`  dist/site/index.html       ${kb(out.site)}   托管版（含 manifest + service worker）`);
+console.log(`  dist/site/admin/index.html ${kb(out.adminHtml)}   公告管理页`);
 console.log(`  dist/bookmarklet.txt       ${kb(out.bmUrl)}   抓取书签链接`);
 console.log('');
 console.log('  提示：dist/仰山课表.html 直接用浏览器打开就能用（file:// 下也正常）。');

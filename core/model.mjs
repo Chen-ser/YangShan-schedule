@@ -363,7 +363,8 @@ export function todoRemindIn(todo, now = new Date()) {
  * 公告是纯静态文件、学生端只读 —— 正因为没有服务器，公告的"实时"只能靠
  * 打开网页时重新拉取，做不到主动推送。这一点在 README 里必须说清楚。
  */
-export function normalizeAnnouncements(raw) {
+export function normalizeAnnouncements(raw, opts = {}) {
+  const source = opts.source === 'local' ? 'local' : 'shared';
   const list = Array.isArray(raw) ? raw : Array.isArray(raw?.announcements) ? raw.announcements : [];
   return list
     .filter((a) => a && (a.title || a.body))
@@ -375,11 +376,111 @@ export function normalizeAnnouncements(raw) {
       pinned: Boolean(a.pinned),
       level: ['info', 'warn', 'urgent'].includes(a.level) ? a.level : 'info',
       link: a.link ? String(a.link) : '',
+      source,
     }))
-    .sort((a, b) => {
-      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-      return (b.date || '').localeCompare(a.date || '');
-    });
+    .sort(annCompare);
+}
+
+/** 公告排序：置顶优先，其余按日期倒序。合并共享/私公告时也要用同一套规则。 */
+export function annCompare(a, b) {
+  if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+  return (b.date || '').localeCompare(a.date || '');
+}
+
+/**
+ * 合并「共享公告」与「本机私公告」。
+ *
+ * 公告分两层：
+ *   - 共享：来自 announcements.json，管理员发布，全班看到的是同一份；
+ *   - 私公告：导入的文件 / 手填的表单，只写本机 localStorage，永远不上传。
+ * 两者 id 撞车时**本地优先** —— 自己改过的自己说了算，但 UI 上必须标出来源，
+ * 否则会出现「我明明改过，怎么又变回去了」这种没法排查的困惑。
+ */
+export function mergeAnnouncements(shared, local) {
+  const ls = Array.isArray(local) ? local : [];
+  const sid = new Set(ls.map((a) => a.id));
+  const rest = (Array.isArray(shared) ? shared : []).filter((a) => !sid.has(a.id));
+  return [...ls, ...rest].sort(annCompare);
+}
+
+// ------------------------------------------------- 公告分享码 / ntfy 频道
+
+/** 公告分享配置的前缀，与课表分享码 YS1- 刻意分开。 */
+export const ANN_SHARE_PREFIX = 'YSA1-';
+/** ntfy 公共实例。 */
+export const NTFY_BASE = 'https://ntfy.sh';
+/** ntfy 频道名允许的字符（官方规则：字母数字加 - 和 _）。 */
+export const TOPIC_RE = /^[-_A-Za-z0-9]{1,64}$/;
+
+/**
+ * 生成「公告分享码」：把 announcements.json 的地址和 ntfy 频道名打包成一段短文本，
+ * 发到班级群里，同学粘到「我的 → 公告源」就行，不用分别填两个东西。
+ *
+ * 为什么用分享码而不是把频道名写死在应用里：仓库和应用站点都是公开的，
+ * 写死就等于公开 —— 而 ntfy.sh 公共实例上「知道频道名就能往频道发消息」。
+ * 放进分享码只在班级范围内流传，算是够用的最小防线。
+ *
+ * 真正的安全保证不在这里，而在接收侧：应用收到唤醒后**必须重新拉 announcements.json
+ * 才渲染**，ntfy 消息本身从不携带内容。所以就算频道名泄露、有人伪造推送，
+ * 顶多让同学们多刷一次公告，注入不了任何文字。
+ */
+export function encodeAnnConfig({ url, topic, name } = {}) {
+  const payload = { v: 1 };
+  if (url) payload.u = String(url);
+  if (topic) payload.t = String(topic);
+  if (name) payload.n = String(name);
+  return ANN_SHARE_PREFIX + toBase64Url(JSON.stringify(payload));
+}
+
+/** 解析分享码。任何不合法的部分都抛错，由调用方显示给用户，不静默吞掉。 */
+export function decodeAnnConfig(code) {
+  const s = String(code ?? '').trim();
+  if (!s.startsWith(ANN_SHARE_PREFIX)) throw new Error('不是公告分享码');
+  let payload;
+  try {
+    payload = JSON.parse(fromBase64Url(s.slice(ANN_SHARE_PREFIX.length)));
+  } catch {
+    throw new Error('分享码内容损坏，请让发布者重新复制一份');
+  }
+  const url = String(payload?.u ?? '').trim();
+  const topic = String(payload?.t ?? '').trim();
+  if (!url && !topic) throw new Error('分享码里既没有公告源地址，也没有推送频道');
+  if (url && !/^https?:\/\//i.test(url)) throw new Error('分享码里的公告源地址不是 http(s) 链接');
+  if (topic && !TOPIC_RE.test(topic)) throw new Error('分享码里的推送频道名不合法');
+  return { url, topic, name: String(payload?.n ?? '').trim() };
+}
+
+/**
+ * 解析用户填进「公告源」的那一行文本。两种都收：
+ *   - 裸 URL（老格式，手工填也方便）
+ *   - YSA1- 分享码
+ */
+export function parseAnnConfig(text) {
+  const s = String(text ?? '').trim();
+  if (!s) return { url: '', topic: '', name: '' };
+  if (s.startsWith(ANN_SHARE_PREFIX)) return decodeAnnConfig(s);
+  if (/^https?:\/\//i.test(s)) return { url: s, topic: '', name: '' };
+  throw new Error('既不是 YSA1- 开头的分享码，也不是 http(s) 开头的地址');
+}
+
+/** 生成一个随机频道名（管理员页「换一个频道」用）。 */
+export function randomTopic(prefix = 'ys') {
+  const bytes = new Uint8Array(12);
+  if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes);
+  else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  let hex = '';
+  for (const b of bytes) hex += b.toString(16).padStart(2, '0');
+  return `${prefix}-${hex}`;
+}
+
+/** ntfy 的 SSE 订阅地址（浏览器端用 EventSource 直接开）。 */
+export function ntfySseUrl(topic, base = NTFY_BASE) {
+  return `${String(base).replace(/\/+$/, '')}/${encodeURIComponent(topic)}/sse`;
+}
+
+/** ntfy 的发布地址（管理员页 POST 到这里）。 */
+export function ntfyPublishUrl(topic, base = NTFY_BASE) {
+  return `${String(base).replace(/\/+$/, '')}/${encodeURIComponent(topic)}`;
 }
 
 /** 未读公告数。 */

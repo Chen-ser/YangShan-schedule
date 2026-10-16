@@ -101,9 +101,12 @@ try {
 
 let bad = 0;
 for (const [k, v] of result.steps) {
-  const flag = v === false || v === '' || v === 0 ? '✗' : '✔';
-  if (flag === '✗') bad++;
-  console.log(`  ${flag} ${k}: ${Array.isArray(v) ? v.join(' | ') : v}`);
+  // 显式布尔判据，没写 pass 的一律算失败。
+  // （早先这里按「值是 false/''/0 才算失败」判，null 不在名单里 ——
+  //   页面根本没加载时 data-ready 是 null，照样打印 OK。同一坑在 e2e-live 也踩过一次。）
+  const pass = v !== false && v !== '' && v !== 0 && v !== null && v !== undefined;
+  if (!pass) bad++;
+  console.log(`  ${pass ? '✔' : '✗'} ${k}: ${Array.isArray(v) ? v.join(' | ') : v}`);
 }
 console.log(bad ? `\nE2E_FAIL ${bad} 项异常` : '\nE2E_OK 全部符合预期');
 process.exit(bad ? 1 : 0);

@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>公告管理 · 仰山课表</title>
+<link rel="icon" href="../icons/icon-32.png">
+<style>/*{{STYLES}}*/</style>
+</head>
+<body class="admin">
+<header class="ad-head">
+  <div>
+    <h1>公告管理</h1>
+    <p class="muted small">仰山课表 · 只有你能看到这个页面（搜索引擎已屏蔽，但地址本身不设防，别把令牌记在公共电脑上）。</p>
+  </div>
+  <span class="muted small" id="ver">v__VERSION__</span>
+</header>
+
+<main class="ad-main">
+
+  <!-- ------------------------------------------------ 连接 -->
+  <section class="card">
+    <h2>1 · 连接仓库</h2>
+    <p class="muted small">
+      需要一个 GitHub <b>细粒度令牌</b>：Settings → Developer settings → Fine-grained tokens →
+      仅授权本仓库 → 权限只勾 <b>Contents: Read and write</b>。
+      令牌只存在这台浏览器的 localStorage 里，不会发往除 api.github.com 以外的任何地方。
+    </p>
+    <div class="row"><span>仓库</span><input id="cfgRepo" placeholder="Chen-ser/YangShan-schedule" autocomplete="off"></div>
+    <div class="row"><span>分支</span><input id="cfgBranch" placeholder="main" autocomplete="off"></div>
+    <div class="row"><span>文件路径</span><input id="cfgPath" placeholder="data/announcements.json" autocomplete="off"></div>
+    <div class="row"><span>令牌</span><input id="cfgToken" type="password" placeholder="github_pat_… 或 ghp_…" autocomplete="off"></div>
+    <div class="btnrow">
+      <button id="btnTest" class="btn ghost">测试连接并读取</button>
+      <button id="btnForget" class="btn ghost danger">清除令牌</button>
+    </div>
+    <p class="hint" id="connHint"></p>
+  </section>
+
+  <!-- ------------------------------------------------ 编辑 -->
+  <section class="card">
+    <h2>2 · 写公告</h2>
+    <div class="row"><span>标题</span><input id="fTitle" placeholder="例如：本周三调课通知"></div>
+    <div class="row"><span>日期</span><input id="fDate" type="date"></div>
+    <div class="row"><span>级别</span>
+      <select id="fLevel">
+        <option value="info">info · 普通</option>
+        <option value="warn">warn · 注意</option>
+        <option value="urgent">urgent · 紧急</option>
+      </select>
+    </div>
+    <div class="row"><span>相关链接</span><input id="fLink" placeholder="可留空" autocomplete="off"></div>
+    <div class="row"><span>置顶</span><input id="fPinned" type="checkbox"></div>
+    <div class="row"><span>正文</span><textarea id="fBody" rows="5" placeholder="支持 **加粗**、- 列表、换行"></textarea></div>
+    <div class="btnrow">
+      <button id="btnAdd" class="btn">加入列表</button>
+      <button id="btnReset" class="btn ghost">清空表单</button>
+    </div>
+    <p class="hint">改一条已有公告时<b>沿用同一个 id</b>：同学那边就不会重复提醒；换了 id 会被当成新公告再提醒一次。</p>
+  </section>
+
+  <!-- ------------------------------------------------ 列表 -->
+  <section class="card">
+    <h2>3 · 当前公告 <span class="muted small" id="listCount"></span></h2>
+    <div id="list" class="ad-list"></div>
+    <div class="btnrow">
+      <button id="btnPublish" class="btn">发布到仓库</button>
+      <button id="btnNotify" class="btn ghost">只发推送（不提交）</button>
+    </div>
+    <p class="hint" id="pubHint"></p>
+    <details>
+      <summary class="muted small">api.github.com 连不上？点这里手动提交</summary>
+      <p class="muted small">
+        本机若走系统代理，api.github.com 有可能不通（应用站点和 ntfy 通常仍然通）。
+        那就用下面的按钮把内容复制走，到 GitHub 网页上直接改
+        <code id="manualPath">data/announcements.json</code> 再提交 —— 效果完全一样。
+      </p>
+      <div class="btnrow">
+        <button id="btnCopyJson" class="btn ghost">复制 JSON</button>
+        <button id="btnDownloadJson" class="btn ghost">下载 JSON</button>
+      </div>
+    </details>
+  </section>
+
+  <!-- ------------------------------------------------ 分享 -->
+  <section class="card">
+    <h2>4 · 发给同学</h2>
+    <p class="muted small">
+      同学在应用里打开「我的 → 公告源」，粘贴下面这段分享码即可 ——
+      它同时带着公告地址和推送频道，一次填好两件事。
+    </p>
+    <div class="row"><span>推送频道</span><input id="cfgTopic" placeholder="ys-bistu-…" autocomplete="off"></div>
+    <div class="btnrow">
+      <button id="btnTopic" class="btn ghost">换一个随机频道</button>
+      <button id="btnTestPush" class="btn ghost">发一条测试推送</button>
+    </div>
+    <label class="muted small">分享码</label>
+    <textarea id="shareCode" rows="3" readonly></textarea>
+    <div class="btnrow">
+      <button id="btnCopyCode" class="btn">复制分享码</button>
+    </div>
+    <p class="hint" id="shareHint"></p>
+    <details>
+      <summary class="muted small">这套推送是怎么工作的（以及它为什么安全）</summary>
+      <p class="muted small">
+        公告的真正内容只存在仓库里的 <code>data/announcements.json</code> ——
+        那才是全班看到的同一份东西。推送（ntfy.sh）只当<b>门铃</b>：响一声，应用就回来重新读文件。
+        所以就算频道名被外人知道、有人往频道里发假消息，也只能让同学多刷一次公告，<b>注入不了任何文字</b>。<br>
+        反过来说，推送失败也不会丢公告：应用每次打开、每 15 分钟、每次切回标签页都会自己拉一次。
+      </p>
+    </details>
+  </section>
+
+  <p class="muted small ad-foot">
+    本页是纯静态页面，没有后端。所有写入都直接走 GitHub API，提交记录里能看到是谁改的。
+  </p>
+</main>
+
+<script>
+/*{{CORE}}*/
+</script>
+<script>
+/*{{ADMIN}}*/
+</script>
+</body>
+</html>

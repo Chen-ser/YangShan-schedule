@@ -169,9 +169,36 @@
 
       <div class="card">
         <h3>公告源</h3>
-        <p class="muted small">指向一个 announcements.json 的地址。留空则不显示公告。</p>
-        <input type="url" id="setAnnUrl" class="text-input" placeholder="https://example.com/announcements.json">
+        <p class="muted small">
+          把班级里发的那串<b>分享码</b>（YSA1- 开头）粘进来就行 —— 它同时带着公告地址和推送频道。
+          只填一个 announcements.json 的网址也可以，那样能看公告、但没有推送。
+        </p>
+        <input type="text" id="setAnnUrl" class="text-input" placeholder="YSA1-… 或 https://example.com/announcements.json">
         <div class="btn-row"><button class="ghost-btn" id="btnSaveAnnUrl">保存并刷新</button><button class="ghost-btn" id="btnAnnExample">格式示例</button></div>
+        <p class="muted small" id="annSrcStatus"></p>
+      </div>
+
+      <div class="card">
+        <h3>新公告通知</h3>
+        <label class="row"><span>弹系统通知</span><input type="checkbox" id="setAnnNotify"></label>
+        <p class="muted small">
+          网页版只在应用开着的时候能弹。想关着也收到，用安卓版；或者在系统里加一条 ntfy 订阅。
+        </p>
+        <div class="btn-row"><button class="ghost-btn" id="btnTestAnnPush">发一条测试通知</button></div>
+      </div>
+
+      <div class="card">
+        <h3>我自己的公告</h3>
+        <p class="muted small">
+          只在你这台设备上，不会上传、也不会分享给别人。它们会混在「公告」页里，带一个「本机」标记。
+        </p>
+        <div class="btn-row">
+          <button class="ghost-btn" id="btnAddLocalAnn">手填一条</button>
+          <button class="ghost-btn" id="btnImportLocalAnn">从文件导入</button>
+          <button class="ghost-btn" id="btnClearLocalAnn">全部清除</button>
+        </div>
+        <p class="muted small" id="localAnnCount"></p>
+        <input type="file" id="fileLocalAnn" accept=".json,application/json" hidden>
       </div>
 
       <div class="card danger-card">

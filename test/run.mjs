@@ -744,6 +744,101 @@ t('model: 导入的公告按时间倒序', () => {
   eq(list[0].id, 'b');
 });
 
+// ---- 公告分享码 / ntfy 频道 / 共享与私公告合并（管理员页 → 用户端的接线） ----
+
+t('ann: 分享码往返一致，且前缀与课表分享码分开', () => {
+  const code = M.encodeAnnConfig({
+    url: 'https://chen-ser.github.io/YangShan-schedule/data/announcements.json',
+    topic: 'ys-bistu-a1b2c3d4e5f6a7b8c9d0e1f2',
+    name: '仰山课表公告',
+  });
+  ok(code.startsWith('YSA1-'), '必须以 YSA1- 开头');
+  ok(!code.startsWith(M.SHARE_PREFIX) && !code.startsWith(M.RAW_PREFIX), '不能和课表分享码混在一起');
+  const back = M.decodeAnnConfig(code);
+  eq(back.url, 'https://chen-ser.github.io/YangShan-schedule/data/announcements.json');
+  eq(back.topic, 'ys-bistu-a1b2c3d4e5f6a7b8c9d0e1f2');
+  eq(back.name, '仰山课表公告');
+});
+
+t('ann: 只有频道、或只有地址的分享码都能解', () => {
+  const onlyTopic = M.decodeAnnConfig(M.encodeAnnConfig({ topic: 'ys-abc' }));
+  eq(onlyTopic.url, '');
+  eq(onlyTopic.topic, 'ys-abc');
+  const onlyUrl = M.decodeAnnConfig(M.encodeAnnConfig({ url: 'https://a.example/x.json' }));
+  eq(onlyUrl.url, 'https://a.example/x.json');
+  eq(onlyUrl.topic, '');
+});
+
+t('ann: 坏分享码一律抛错，不静默用一半', () => {
+  throws(() => M.decodeAnnConfig('YS1-abc'), '不是公告分享码');
+  throws(() => M.decodeAnnConfig('YSA1-!!!!'), '内容损坏');
+  throws(() => M.decodeAnnConfig(M.encodeAnnConfig({})), '空载荷');
+  throws(() => M.decodeAnnConfig(M.encodeAnnConfig({ topic: '有中文' })), '频道名非法');
+  throws(() => M.decodeAnnConfig(M.encodeAnnConfig({ topic: 'a/b' })), '频道名不许有斜杠');
+  throws(() => M.decodeAnnConfig(M.encodeAnnConfig({ url: 'ftp://x/y.json' })), '地址必须是 http(s)');
+});
+
+t('ann: 公告源输入框同时接受裸网址和分享码', () => {
+  eq(M.parseAnnConfig('https://a.example/ann.json').url, 'https://a.example/ann.json');
+  eq(M.parseAnnConfig('https://a.example/ann.json').topic, '');
+  eq(M.parseAnnConfig('').url, '', '留空是合法的（等于不订阅）');
+  eq(M.parseAnnConfig('   ').topic, '');
+  const c = M.parseAnnConfig(M.encodeAnnConfig({ url: 'https://a.example/ann.json', topic: 'ys-1' }));
+  eq(c.topic, 'ys-1');
+  throws(() => M.parseAnnConfig('随便写的一串'), '既不是分享码也不是地址');
+});
+
+t('ann: 本机私公告与共享公告合并，同 id 时本机优先', () => {
+  const shared = [
+    { id: 's1', title: '共享一', date: '2025-10-01' },
+    { id: 'dup', title: '共享的重复 id', date: '2025-10-02' },
+  ];
+  const local = [
+    { id: 'dup', title: '我自己改过的', date: '2025-10-03', source: 'local' },
+    { id: 'l1', title: '私公告', date: '2025-09-30', source: 'local' },
+  ];
+  const merged = M.mergeAnnouncements(shared, local);
+  eq(merged.length, 3, '重复 id 只留一条');
+  const dup = merged.find((a) => a.id === 'dup');
+  eq(dup.title, '我自己改过的', '同 id 时本机优先');
+  eq(dup.source, 'local');
+  eq(merged[0].id, 'dup', '合并后仍按日期倒序');
+});
+
+t('ann: 来源标记要落到 normalized 结果上', () => {
+  eq(M.normalizeAnnouncements([{ id: 'a', title: 'x' }])[0].source, 'shared', '默认共享');
+  eq(M.normalizeAnnouncements([{ id: 'a', title: 'x' }], { source: 'local' })[0].source, 'local');
+});
+
+t('ann: 置顶的私公告在合并后仍排最前', () => {
+  const merged = M.mergeAnnouncements(
+    [{ id: 's1', title: '新的共享公告', date: '2025-10-09' }],
+    [{ id: 'l1', title: '置顶的私公告', date: '2025-09-01', pinned: true, source: 'local' }],
+  );
+  eq(merged[0].id, 'l1');
+});
+
+t('ann: ntfy 地址与随机频道名', () => {
+  eq(M.ntfySseUrl('ys-abc'), 'https://ntfy.sh/ys-abc/sse');
+  eq(M.ntfyPublishUrl('ys-abc'), 'https://ntfy.sh/ys-abc');
+  eq(M.ntfySseUrl('ys-abc', 'https://ntfy.sh/'), 'https://ntfy.sh/ys-abc/sse', '结尾斜杠要归一');
+  const topic = M.randomTopic('ys-bistu');
+  ok(/^ys-bistu-[0-9a-f]{24}$/.test(topic), `随机频道名格式不对：${topic}`);
+  ok(M.TOPIC_RE.test(topic));
+  ok(!M.TOPIC_RE.test('有中文'));
+  ok(!M.TOPIC_RE.test('a/b'));
+  ok(!M.TOPIC_RE.test(''), '空频道名非法');
+  ok(!M.TOPIC_RE.test('x'.repeat(65)), '超过 64 字符非法');
+  ok(M.randomTopic('ys') !== M.randomTopic('ys'), '两次生成不应相同');
+});
+
+t('data: 仓库里的公告权威源合法、可解析、初始为空', () => {
+  const raw = JSON.parse(readFileSync(join(ROOT, 'data/announcements.json'), 'utf8'));
+  ok(Array.isArray(raw.announcements), '必须有 announcements 数组');
+  deepEq(M.normalizeAnnouncements(raw), [], '初始状态不该有公告');
+  ok(Array.isArray(raw._说明) && raw._说明.length > 0, '_说明 要在，它是给管理员看的');
+});
+
 t('model: 提醒时间计算（提前 N 分钟）', () => {
   eq(M.remindAt('2025-09-10T08:00', 15), '2025-09-10T07:45');
   eq(M.remindAt('2025-09-10T08:00', 0), '2025-09-10T08:00');

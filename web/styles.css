@@ -367,6 +367,9 @@ textarea { width: 100%; min-height: 130px; resize: vertical; font-family: ui-mon
 .ann-item.lv-warn { border-left-color: #e8a33d; }
 .ann-item.lv-urgent { border-left-color: var(--danger); }
 .pin-tag { font-size: 11px; background: var(--accent); color: #fff; padding: 1px 6px; border-radius: 5px; }
+/* 「本机」标记：私公告和共享公告混在同一列里，不标出来源就分不清哪条是自己加的。
+   刻意用描边而不是实心 —— 它是状态说明，不该抢标题的注意力。 */
+.src-tag { font-size: 11px; border: 1px solid var(--line); color: var(--muted); padding: 0 5px; border-radius: 5px; }
 
 /* ---------------------------------------------------------- 底部导航 */
 .tabbar {
