@@ -133,8 +133,35 @@ shells/android/
 - **登录表单在 iframe 里**，自动填表不能只看 `document`。
   好消息是 `sso.bistu.edu.cn` 的 iframe 同源，主框架 JS 能直接摸到 `contentDocument`，
   所以不需要任何「按 frame 执行 JS」的 API（安卓的 WebView 本来也没有）。
+  **而且它比主框架的 `onPageFinished` 晚约 380ms 才建好**（2026-10-16 用 25ms 粒度探针实测：
+  `onPageFinished` 在 t≈647ms、表单在 t≈1025ms），所以填表必须**轮询**，只试一次必然拿到 `noform`。
+  Windows 壳没有这个问题 —— 它挂的是 `FrameCreated`，在 iframe 自己导航完成时才填。
 - **登录页是 Vue 的 `v-model`**：`el.value = x` 不会更新 Vue 状态，
   必须走原型上的原生 setter 再派发冒泡的 `input`/`change`。这条也从 Windows 壳那边照搬。
+- **★ 教务窗口必须报桌面版 UA**（`SchoolWeb.kt` 的 `DESKTOP_UA`），
+  **不要**改回 `web.settings.userAgentString + " YangShanShell/…"`。
+  教务系统按 UA 分流：安卓 UA 会被 SSO 送到 `normal/login-mobile.html`（Vant 手机版），
+  **而手机分支里没有课表页**。2026-10-16 真机上报「登录过去了但是个空白页、抓不到课表」就是这个原因；
+  同一系统在 Windows 壳（桌面版 WebView2）上一直是好的 —— 两边唯一的差别就是 UA。
+  配套还要 `useWideViewPort` + `loadWithOverviewMode`，否则定宽的桌面版页面在手机上只看得到左上角一块。
+- **★ 桌面版登录页是「扫码 / 账号密码 / 短信」三页签，而选中的是哪一个会被记住**。
+  源码里 `loginType: 'username-password'` 只是初值，紧接着就被
+  `localStorage.getItem('loginType')` 覆盖 —— 所以完全可能停在扫码或短信页。
+  那时账号口令表单还在 DOM 里、只是被 `v-show` 藏着，藏着的时候验证码探测永远为 null，
+  盲提交过去只会换来一句「登录失败」。所以填表前要先切到「账号密码」页签
+  （按页签文字匹配，不要写死索引）。**注意密码框填不填得进去跟页签无关**
+  （`v-model` 不挑可见性），切页签是为了「万一要验证码，用户接手时能看见该看的那一屏」。
+- **★ 验证码要判「在不在」，不能判「看不看得见」**。那几个标记
+  （`#captchaId` / `.ali-captcha` / `.captcha-box` …）是 `v-if="showCaptcha"` 控制的，
+  不需要时**根本不在 DOM 里**。反过来用 `offsetParent` 判有两个坑：
+  它所在的面板可能正被 `v-show` 藏着，而且 `v-show` 要下一帧才生效 ——
+  结果是明明要验证码却判成不用，盲提交、用户只看到一句看不懂的「登录失败」。
+  宁可为「要验证码」多问一句。
+- **★ `button.btn-submit` 在同一页上会同时命中扫码页的「刷新二维码」**。
+  按 DOM 顺序取第一个会点错按钮 —— 必须按「可见 + 文字不是刷新」来挑，
+  实在挑不出来就退回在密码框上派发 `keyup Enter`（输入框上本来就挂着 `@keyup.enter="login"`）。
+  这套加固**Windows 壳的 `SchoolForm.cs:FillScript` 也要同步**：
+  两边跑偏正是这次安卓 bug 的成因，`test/run.mjs` 里有专门断言两边都做到的用例。
 
 ---
 

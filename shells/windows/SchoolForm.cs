@@ -236,21 +236,43 @@ internal sealed class SchoolForm : Form
         }
     }
 
+    /// <summary>
+    /// 往登录表单里填账号密码。登录页是 Vue 的 v-model —— 直接改 el.value 不会更新 Vue 的状态，
+    /// 必须走原型上的原生 setter，再派发一个冒泡的 input 事件，否则点提交时发出去的是空字符串。
+    /// ★ 这个脚本跑在**登录页那个 iframe 里**（document 就是登录页自己），下面不用再翻 iframe。
+    /// ★ 桌面版登录页是「扫码 / 账号密码 / 短信」三页签，而且**选中的是哪一个会被记住**
+    ///   （源码里 `loginType: 'username-password'` 只是初值，紧接着被
+    ///   `localStorage.getItem('loginType')` 覆盖）—— 所以完全可能停在扫码或短信页，
+    ///   那时账号口令表单还在 DOM 里、只是被 v-show 藏着。填是照样能填，
+    ///   但用户接手时得看见对的那一屏，所以先切过去。
+    /// ★ 验证码框是 v-if="showCaptcha" 控制的，不需要时**根本不在 DOM 里**：
+    ///   判「有没有」就够，**不能**判可见性（它所在的「账号密码」面板可能正被 v-show 藏着，
+    ///   用 offsetParent 判会永远判不到，然后盲提交、只剩一句看不懂的「登录失败」）。
+    /// ★ 同一页上 button.btn-submit 会同时命中扫码页的「刷新二维码」，
+    ///   按 DOM 顺序取第一个会点错，所以要按「看得见 + 不叫刷新」来挑。
+    /// </summary>
     private static string FillScript(string user, string password) =>
         "(function(){" +
         "var u=document.querySelector('input[name=\"username\"]');" +
         "var p=document.querySelector('input[name=\"password\"]');" +
         "if(!u||!p) return 'nofields';" +
+        "var tabs=document.querySelectorAll('.content-tabs-title > div');" +
+        "for(var i=0;i<tabs.length;i++){" +
+        "if(/账号密码|帳號密碼|password/i.test(tabs[i].textContent||'')){tabs[i].click();break;}}" +
         "function set(el,v){var d=Object.getOwnPropertyDescriptor(el.constructor.prototype,'value');" +
         "if(d&&d.set){d.set.call(el,v);}else{el.value=v;}" +
         "el.dispatchEvent(new Event('input',{bubbles:true}));" +
         "el.dispatchEvent(new Event('change',{bubbles:true}));}" +
         $"set(u,{JsonSerializer.Serialize(user)});set(p,{JsonSerializer.Serialize(password)});" +
-        "var c=document.querySelector('#captchaId,#TencentCaptchaId,#aliCaptchaId,.ali-captcha,.captcha-box');" +
-        "if(c&&c.offsetParent!==null) return 'captcha';" +
-        "var b=document.querySelector('button.btn-submit')||document.querySelector('.btn-submit')||document.querySelector('button[type=\"submit\"]');" +
-        "if(!b) return 'nobutton';" +
-        "setTimeout(function(){b.click();},200);" +
+        "if(document.querySelector('#captchaId,#TencentCaptchaId,#aliCaptchaId,.ali-captcha,.captcha-box')) return 'captcha';" +
+        "var bs=document.querySelectorAll('button.btn-submit,.btn-submit,button[type=\"submit\"]');" +
+        "for(var k=0;k<bs.length;k++){" +
+        "var b=bs[k];" +
+        "if(b.offsetParent===null) continue;" +
+        "if(/刷新|Refresh/i.test(b.textContent||'')) continue;" +
+        "(function(x){setTimeout(function(){x.click();},200);})(b);" +
+        "return 'submitted';}" +
+        "p.dispatchEvent(new KeyboardEvent('keyup',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));" +
         "return 'submitted';" +
         "})()";
 

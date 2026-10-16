@@ -200,6 +200,114 @@ t('推送载荷一律不可信：通知正文只能来自公告 JSON', () => {
   ok(svc.includes('appVisible'), 'App 在前台时让位给网页端，避免弹两条');
 });
 
+// ---------------------------------------------------------------- 教务登录与抓取（安卓）
+// 真机上这条路失败时是**静默**的：状态栏停在一句看不出所以然的话，用户只能报「导入失败」。
+// 下面三条都是已经在真机/探针上踩实了的坑，钉住它们免得下次改别的东西时又踩回去。
+
+t('安卓教务窗口必须报桌面版 UA：手机 UA 那一支根本没有课表页', () => {
+  const src = readFileSync(
+    join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/SchoolWeb.kt'),
+    'utf8',
+  );
+  ok(
+    /DESKTOP_UA\s*=\s*"Mozilla\/5\.0 \(Windows NT/.test(src),
+    '必须自带一份桌面版 UA 字面量',
+  );
+  ok(
+    /userAgentString\s*=\s*DESKTOP_UA/.test(src),
+    '必须整体替换 UA —— 在安卓 UA 后面拼后缀仍然落进手机分支',
+  );
+  ok(
+    !/userAgentString\s*\+\s*"/.test(src),
+    '不得再用 web.settings.userAgentString 拼接（那正是要躲开的写法）',
+  );
+  ok(src.includes('useWideViewPort'), '桌面版页面是定宽的，必须允许缩放');
+  ok(src.includes('loadWithOverviewMode'), '必须整体缩到屏幕宽，否则手机上只看得到左上角一块');
+});
+
+t('登录表单在 iframe 里晚几百毫秒才建好，填表必须轮询而不是只试一次', () => {
+  const src = readFileSync(
+    join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/SchoolWeb.kt'),
+    'utf8',
+  );
+  ok(src.includes('FILL_POLL_MS') && src.includes('FILL_MAX_TRIES'), '必须给轮询定义间隔与次数上限');
+  ok(/fillTries\s*<\s*FILL_MAX_TRIES/.test(src), '没找到表单时要继续轮询');
+  ok(src.includes("'noform'"), '要认得出「表单还没建好」这一种返回');
+  ok(src.includes('fillDone'), '真的填过并提交之后就不能再抢用户的输入框');
+  ok(src.includes('sso.bistu.edu.cn'), '迟到的重试必须先确认人还在登录页');
+});
+
+t('登录页的页签是可记忆的（可能是扫码/短信页），填表前必须先切到账号密码', () => {
+  const src = readFileSync(
+    join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/SchoolWeb.kt'),
+    'utf8',
+  );
+  ok(src.includes('content-tabs-title'), '按页签容器的文字找，不能写死「第几个」');
+  ok(src.includes('账号密码'), '要认得中文页签名');
+  ok(
+    src.includes('刷新') || src.includes('Refresh'),
+    '按钮不能按 DOM 顺序取第一个 —— 同一个 .btn-submit 也会命中「刷新二维码」',
+  );
+  ok(src.includes('offsetParent'), '挑按钮时要先看是否可见');
+});
+
+t('验证码按「在不在」判，不能按「看不看得见」判', () => {
+  // 这两条各踩过一次坑：
+  //   1. 验证码标记是 v-if="showCaptcha" 控制的，不需要时根本不在 DOM 里；
+  //   2. 真正需要时它所在的「账号密码」面板可能正被 v-show 藏着
+  //      （页签选中的是哪一个存在 localStorage 里，可能是扫码/短信页），
+  //      用 offsetParent 判会永远判不到 → 盲提交 → 用户只看到一句「登录失败」。
+  const capLines = (file) =>
+    readFileSync(join(ROOT, file), 'utf8')
+      .split('\n')
+      .filter((l) => l.includes('captcha-box'));
+  for (const [shell, file] of [
+    ['安卓', 'shells/android/app/src/main/java/dev/yangshan/schedule/SchoolWeb.kt'],
+    ['Windows', 'shells/windows/SchoolForm.cs'],
+  ]) {
+    const lines = capLines(file);
+    ok(lines.length > 0, `${shell}壳里要能找到验证码探测`);
+    for (const l of lines) {
+      ok(
+        !l.includes('offsetParent') && !l.includes('visible('),
+        `${shell}壳的验证码不能判可见性（页签默认藏着会让它永远判不到）：${l.trim()}`,
+      );
+    }
+  }
+});
+
+t('两个壳的自动填表必须一视同仁（这场 bug 就是两边跑偏造成的）', () => {
+  const shells = {
+    安卓: readFileSync(
+      join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/SchoolWeb.kt'),
+      'utf8',
+    ),
+    Windows: readFileSync(join(ROOT, 'shells/windows/SchoolForm.cs'), 'utf8'),
+  };
+  for (const [shell, src] of Object.entries(shells)) {
+    ok(src.includes('content-tabs-title'), `${shell}壳：登录页默认停在扫码页，要切到账号密码`);
+    ok(/刷新|Refresh/.test(src), `${shell}壳：挑提交按钮时要排掉「刷新二维码」`);
+    ok(src.includes('KeyboardEvent'), `${shell}壳：挑不到合适的按钮时要能用回车兜底`);
+    ok(
+      /return ['"]nofields['"]|return 'noform'|'noform'/.test(src),
+      `${shell}壳：要认得出「表单还没建好」这一种返回`,
+    );
+  }
+});
+
+t('抓取失败要能就地重试，而且失败原因必须带上当时停在哪个页面', () => {
+  const src = readFileSync(
+    join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/SchoolWeb.kt'),
+    'utf8',
+  );
+  ok(src.includes('CAPTURE_RETRY_MS'), '抓取重试要有间隔');
+  ok(src.includes('CAPTURE_MAX_TRIES'), '抓取重试必须封顶，不能无限重来');
+  ok(src.includes('__YS_NO_CAPTURE__'), '脚本没落地要认得出来（它是重试得掉的那种）');
+  ok(/retryable\(err\)/.test(src), '失败要先判能不能重试再决定报错');
+  ok(src.includes('private fun where()'), '失败原因必须带上当时的页面地址');
+  ok(src.includes('lastUrl'), '要记住最近一次 onPageFinished 的地址');
+});
+
 // ================================================================ 0. 浏览器安全
 // 这是把核心从"只能在 Node 跑"改造成"四端共用"之后必须守住的一条线：
 // 核心文件里一旦出现 node:crypto / Buffer / process，打包进网页后浏览器直接崩。
