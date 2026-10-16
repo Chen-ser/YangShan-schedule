@@ -175,17 +175,32 @@ internal sealed class MainForm : Form
                 case "refresh":
                 {
                     var json = await RefreshQuietlyAsync();
-                    Reply(id, true, json, null);
+                    if (json is null)
+                    {
+                        Reply(id, false, null, "自动刷新失败，请查看托盘提示后重试。");
+                    }
+                    else
+                    {
+                        Reply(id, true, json, null);
+                    }
                     break;
                 }
                 case "status":
                 {
                     var stored = CredStore.Load();
+                    var hasSchedule = false;
+                    if (_web.CoreWebView2 is not null)
+                    {
+                        var probe = await ShellRuntime.EvalAsync(
+                            _web,
+                            "(globalThis.YangShan && typeof YangShan.hasSchedule === 'function') ? String(YangShan.hasSchedule()) : 'false'");
+                        hasSchedule = probe.Ok && string.Equals(probe.Value, "true", StringComparison.OrdinalIgnoreCase);
+                    }
                     var payload = JsonSerializer.Serialize(new
                     {
                         name = "windows",
                         version = "0.1.0",
-                        hasSchedule = false,
+                        hasSchedule,
                         remembered = stored is not null,
                         username = stored?.User ?? _shell.Settings.Username,
                         autoRefresh = _shell.Settings.AutoRefreshEnabled,

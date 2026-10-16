@@ -137,6 +137,7 @@ function loadState() {
 function saveState() {
   try {
     localStorage.setItem(LS_KEY, JSON.stringify(state));
+    localStorage.setItem(LS_KEY + '/updatedAt', String(Date.now()));
   } catch (e) {
     // iOS 上 Safari 可能因为存储配额清理 localStorage，也会在无痕模式下直接抛错
     toast('保存失败：浏览器存储不可用。建议立刻导出备份。', 5000);
@@ -273,12 +274,19 @@ function renderWeek() {
 
   // 背景格子（提供网格线与"今天"底色）
   for (let s = rowStart; s <= rowEnd; s++) {
-    body.append(h('div', { class: 'gd-time' },
+    const gridRow = s - rowStart + 1;
+    body.append(h('div', {
+      class: 'gd-time',
+      style: { gridColumn: '1', gridRow: String(gridRow) },
+    },
       h('span', {}, String(s)),
       h('span', {}, (SECTION_TIMES[s - 1]?.start ?? '').slice(0, 5)),
     ));
     for (let i = 0; i < dayCount; i++) {
-      body.append(h('div', { class: 'gd-cell' + (dates[i] === today ? ' today' : '') }));
+      body.append(h('div', {
+        class: 'gd-cell' + (dates[i] === today ? ' today' : ''),
+        style: { gridColumn: String(i + 2), gridRow: String(gridRow) },
+      }));
     }
   }
 
@@ -1841,8 +1849,19 @@ function bindEvents() {
   $('btnRefreshAnn').addEventListener('click', () => refreshAnnouncements());
   $('btnSettings').addEventListener('click', () => switchView('me'));
   $('btnSync').addEventListener('click', () => {
-    // 网页自己抓不了（跨域），所以这里只做两件事：重拉公告 + 提示怎么重新拿课表
+    const shell = globalThis.YangShanShell;
     refreshAnnouncements(true);
+    if (shell && typeof shell.refresh === 'function') {
+      toast('正在从教务系统刷新课表…');
+      shell.refresh()
+        .then((raw) => {
+          applyPack(normalizeSchedulePack(raw));
+          toast('课表已更新');
+        })
+        .catch((e) => toast('刷新失败：' + (e?.message || e)));
+      return;
+    }
+    // 纯网页端受同源策略限制，改走书签抓取或手动导入。
     if (document.getElementById('bookmarklet-src')?.textContent?.trim()) modalBookmarklet();
     else modalImport();
   });

@@ -76,6 +76,7 @@ object Store {
 
     private const val FILE = "yangshan_state"
     private const val K_RAW = "raw"
+    private const val K_RAW_AT = "rawAt"
 
     private fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -84,8 +85,10 @@ object Store {
     fun raw(ctx: Context): String? = prefs(ctx).getString(K_RAW, null)
 
     fun saveRaw(ctx: Context, raw: String) {
-        prefs(ctx).edit().putString(K_RAW, raw).apply()
+        prefs(ctx).edit().putString(K_RAW, raw).putLong(K_RAW_AT, System.currentTimeMillis()).apply()
     }
+
+    fun rawAt(ctx: Context): Long = prefs(ctx).getLong(K_RAW_AT, 0L)
 
     fun clear(ctx: Context) {
         prefs(ctx).edit().clear().apply()

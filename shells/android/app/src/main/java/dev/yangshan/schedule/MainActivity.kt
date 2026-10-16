@@ -119,14 +119,18 @@ class MainActivity : Activity(), ShellBridge.Host {
                 " ? String(YangShan.hasSchedule()) : 'false'"
         ) { value ->
             val creds = Creds.load(this)
-            val payload = JSONObject()
+            val status = JSONObject()
                 .put("name", "android")
                 .put("version", "0.1.0")
                 .put("hasSchedule", value?.trim('"') == "true")
                 .put("remembered", creds != null)
                 .put("autoRefresh", true)
                 .put("autoRefreshMinutes", 60)
-            if (creds != null) payload.put("username", creds.first) else payload.put("username", JSONObject.NULL)
+            if (creds != null) status.put("username", creds.first) else status.put("username", JSONObject.NULL)
+            val payload = JSONObject()
+                .put("id", id)
+                .put("ok", true)
+                .put("pack", status)
             reply(payload)
         }
     }
@@ -171,10 +175,12 @@ class MainActivity : Activity(), ShellBridge.Host {
      */
     private fun restoreIfNeeded() {
         val raw = Store.raw(this) ?: return
+        val rawAt = Store.rawAt(this)
         val js = """
             (function () {
               if (!globalThis.YangShan) return 'no-bridge';
-              try { if (YangShan.hasSchedule()) return 'has'; } catch (e) {}
+              var localAt = Number(localStorage.getItem('yangshan-schedule/v1/updatedAt') || 0);
+              if (YangShan.hasSchedule() && localAt >= ${rawAt} && ${rawAt} > 0) return 'local-newer';
               try { YangShan.importText(${JSONObject.quote(raw)}); return 'restored'; }
               catch (e) { return 'error: ' + e.message; }
             })()

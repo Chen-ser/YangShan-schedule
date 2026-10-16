@@ -67,6 +67,13 @@ t('移动端课表网格保留最小列宽并允许横向滚动', () => {
   ok(/\.grid-body[\s\S]*?min-width:\s*calc\(38px \+ var\(--days, 7\) \* 50px\)/.test(css), '表体必须有最小宽度');
 });
 
+t('周课表背景格显式绑定行列，时间轴不会被课程卡片挤走', () => {
+  const src = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  ok(src.includes("gridColumn: '1'"), '节次时间格必须固定在第 1 列');
+  ok(src.includes("gridColumn: String(i + 2)"), '日期背景格必须固定到对应日期列');
+  ok(src.includes("gridRow: String(gridRow)"), '背景格必须固定到对应节次行');
+});
+
 t('品牌资源会注入页面模板', () => {
   const template = readFileSync(join(ROOT, 'web/template.html'), 'utf8');
   const build = readFileSync(join(ROOT, 'web/build.mjs'), 'utf8');
@@ -75,6 +82,33 @@ t('品牌资源会注入页面模板', () => {
   ok(template.includes('/*{{ABOUT_IMAGE}}*/'), '关于页图片占位符');
   ok(build.includes("brand-logo.jpg"), '构建脚本读取主页品牌图');
   ok(build.includes("about-contact.jpg"), '构建脚本读取关于页图片');
+});
+
+t('Windows 壳状态与刷新回包不能丢失真实状态', () => {
+  const src = readFileSync(join(ROOT, 'shells/windows/MainForm.cs'), 'utf8');
+  ok(src.includes('hasSchedule,') || src.includes('hasSchedule ='), 'Windows 状态应探测页面中的真实课表状态');
+  ok(src.includes('自动刷新失败，请查看托盘提示后重试。'), '刷新失败必须返回失败回包');
+  ok(!/hasSchedule\s*=\s*false\s*,/.test(src), '不得把 hasSchedule 写死为 false');
+});
+
+t('安卓壳所有异步回包都带请求 id，并恢复最新课表', () => {
+  const src = readFileSync(
+    join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/MainActivity.kt'),
+    'utf8',
+  );
+  ok(src.includes('.put("id", id)'), '安卓状态回包必须带请求 id');
+  ok(src.includes('.put("ok", true)'), '安卓状态回包必须带成功标志');
+  ok(src.includes('.put("pack", status)'), '安卓状态回包必须把状态放进 pack 字段');
+  ok(src.includes('localStorage.getItem'), '安卓恢复应比较网页本地更新时间');
+  ok(src.includes('local-newer'), '用户较新的本地导入不能被旧抓取结果覆盖');
+  ok(!/if\s*\(YangShan\.hasSchedule\(\)\)\s*return 'has'/.test(src), '安卓启动时不能跳过 Store 中的最新课表');
+});
+
+t('网页同步按钮在原生壳中调用真实刷新接口', () => {
+  const src = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  ok(src.includes("typeof shell.refresh === 'function'"), '同步按钮应探测壳的刷新接口');
+  ok(src.includes('shell.refresh()'), '同步按钮应调用壳刷新');
+  ok(src.includes('刷新失败：'), '同步失败应给出可见提示');
 });
 
 // ================================================================ 0. 浏览器安全
