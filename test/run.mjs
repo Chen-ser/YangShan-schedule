@@ -74,6 +74,164 @@ t('周课表背景格显式绑定行列，时间轴不会被课程卡片挤走',
   ok(src.includes("gridRow: String(gridRow)"), '背景格必须固定到对应节次行');
 });
 
+t('课程触摸交互区分点击、滚动与长按拖拽', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  const css = readFileSync(join(ROOT, 'web/styles.css'), 'utf8');
+  ok(app.includes('distance > 8'), '移动距离超过阈值时必须取消点击');
+  ok(app.includes('node.setPointerCapture?.(ev.pointerId)'), '只有进入拖拽后才捕获指针');
+  ok(app.includes('ev.preventDefault()'), '拖拽过程中必须阻止页面滚动');
+  ok(app.includes("node.style.pointerEvents = 'none'"), '拖拽命中测试必须穿透课程块');
+  ok(app.includes('lostpointercapture'), '指针捕获丢失时必须清理拖拽状态');
+  ok(css.includes('touch-action: none'), '课程块触摸必须交给拖拽状态机');
+  ok(app.includes('scheduleDragLock'), '拖拽状态必须有页面滚动锁');
+  ok(app.includes("document.addEventListener('touchmove'"), '长按拖拽时必须拦截页面触摸滚动');
+  ok(css.includes('overscroll-behavior: none'), '拖拽锁定时必须禁止过度滚动');
+});
+
+t('多节课程拖拽保持原跨度并限制末节起点', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  ok(app.includes('const maxStart = Math.max(1, 13 - span.duration + 1)'), '必须限制多节课程的最大起始节次');
+  ok(app.includes('const endSection = section + span.duration - 1'), '结束节次必须按原跨度重新计算');
+  ok(app.includes('node.style.gridRow = `${beginSection - rowStart + 1} / ${endSection - rowStart + 2}`'), '拖拽预览必须覆盖完整课程跨度');
+  ok(app.includes('beginTime: SECTION_TIMES[section - 1]?.start'), '总课表拖拽后必须同步开始时间');
+  ok(app.includes('endTime: SECTION_TIMES[endSection - 1]?.end'), '总课表拖拽后必须同步结束时间');
+  ok(app.includes('start: SECTION_TIMES[section - 1]?.start'), '周课表拖拽后必须同步开始时间');
+  ok(app.includes('end: SECTION_TIMES[endSection - 1]?.end'), '周课表拖拽后必须同步结束时间');
+  ok(app.includes('ensureEditableEntryIds'), '课程修改必须使用不随位置变化的本地条目标识');
+});
+
+t('设置页切换后会重新渲染课表修改记录', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  const template = readFileSync(join(ROOT, 'web/template.html'), 'utf8');
+  ok(app.includes("if (name === 'me') renderScheduleChanges();"), '进入我的页面时必须刷新修改记录');
+  ok(template.includes('id="scheduleChanges"'), '设置页必须包含修改记录容器');
+  ok(template.includes('id="btnClearScheduleChanges"'), '设置页必须包含删除记录按钮');
+});
+
+t('课程编辑会同步节次与具体时间，并记录两类字段', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  ok(app.includes('syncTimesFromSections'), '修改节次后必须同步上下课时间输入框');
+  ok(app.includes('sectionForClock'), '修改具体时间后必须同步对应节次');
+  ok(app.includes("const typedBeginTime = normTime($('editStart').value)"), '保存时必须直接读取上课时间输入');
+  ok(app.includes('sectionForClock(typedBeginTime'), '保存时必须由上课时间重新推导开始节次');
+  ok(app.includes('sectionForClock(typedEndTime'), '保存时必须由下课时间重新推导结束节次');
+  ok(app.includes('beginTime,') && app.includes('endTime,'), '保存修改必须写入上下课时间');
+  ok(app.includes('fields.start ||') && app.includes('fields.end ||'), '修改记录必须展示周课表时间字段');
+});
+
+t('课程块按实际时间在节次格内偏移显示', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  ok(app.includes('function courseVisualInsets'), '必须有按分钟计算课程块偏移的函数');
+  ok(app.includes('marginTop: `${(1 + top).toFixed(2)}px`'), '开始时间应转换为上边距');
+  ok(app.includes('marginBottom: `${(1 + bottom).toFixed(2)}px`'), '结束时间应转换为下边距');
+  ok(app.includes('...courseVisualInsets(e)'), '周课表必须使用实际时间定位');
+  ok(app.includes('...courseVisualInsets(c)'), '总课表必须使用实际时间定位');
+});
+
+t('安卓教务接口使用绝对地址，兼容 *default 路由的 WebView', () => {
+  const src = readFileSync(join(ROOT, 'shells/capture.js'), 'utf8');
+  ok(src.includes("var API_ORIGIN = 'https://jwxt.bistu.edu.cn';"), '抓取接口必须声明教务域名');
+  ok(src.includes("API_ORIGIN + '/jwapp/sys/homeapp/api/home/currentUser.do'"), '当前用户接口必须使用绝对地址');
+  ok(src.includes("API_ORIGIN + '/jwapp/sys/kbbpapp/api/schoolCalendar/getTermWeeks.do'"), '周历接口必须使用绝对地址');
+  ok(src.includes("API_ORIGIN + '/jwapp/sys/homeapp/api/home/student/getMyScheduleDetail.do'"), '课表接口必须使用绝对地址');
+});
+
+t('自动刷新课表必须延续本地修改记录', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  const android = readFileSync(
+    join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/MainActivity.kt'),
+    'utf8',
+  );
+  const windows = readFileSync(join(ROOT, 'shells/windows/MainForm.cs'), 'utf8');
+  ok(app.includes('if (opts.preserveChanges)'), '课表导入必须支持静默保留修改记录');
+  ok(app.includes('applyPack(normalizeSchedulePack(raw), { preserveChanges: true })'), '页面刷新回包必须保留修改记录');
+  ok(android.includes('YangShan.importText') && android.includes('preserveChanges: true'), '安卓后台刷新恢复必须保留修改记录');
+  ok(windows.includes('YangShan.importRaw') && windows.includes('preserveChanges: true'), 'Windows 自动刷新注入必须保留修改记录');
+});
+
+t('智能助手支持 DeepSeek 配置、通知文件提取与提问', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  const template = readFileSync(join(ROOT, 'web/template.html'), 'utf8');
+  const css = readFileSync(join(ROOT, 'web/styles.css'), 'utf8');
+  const pdfjs = readFileSync(join(ROOT, 'vendor/pdfjs/pdf.min.mjs'), 'utf8');
+  ok(app.includes("aiModel: 'deepseek-flash'"), '默认模型必须是 deepseek-flash');
+  ok(app.includes('function assistantInjectionPrompt'), '必须生成智能助手注入提示词');
+  ok(app.includes('function extractAssistantFile'), '必须提供通知文件提取');
+  ok(app.includes('readZipTextEntries') && app.includes('slide\\d+'), '必须支持 DOCX/PPTX 文本提取');
+  ok(app.includes('function extractAssistantPdf') && app.includes('disableWorker: true'), 'PDF 必须在本机转换为图片');
+  ok(app.includes('image_url') && app.includes('reasoning_effort'), '图片输入与思考强度必须传给接口');
+  ok(app.includes('fetchAssistantUrlContext'), '联网增强必须有独立的联网上下文处理');
+  ok(template.includes('id="view-assistant"') && template.includes('id="assistantFile"'), '必须有智能助手分区和文件入口');
+  ok(template.includes('id="setAiApiKey"') && !template.includes('id="setAiPrompt"'), 'API 设置保留但不得向用户展示注入提示词');
+  ok(template.includes('.pdf,application/pdf') && template.includes('<!--{{PDFJS}}-->'), '助手必须提供 PDF 上传入口和本地渲染引擎');
+  ok(pdfjs.includes('globalThis.pdfjsLib') && pdfjs.length > 300_000, 'PDF.js 本地资产必须完整存在');
+  ok(css.includes('.assistant-drop') && css.includes('.assistant-answer'), '智能助手需要有独立布局样式');
+});
+
+t('底部导航将“我的”改名为“设置”并保留智能助手入口', () => {
+  const template = readFileSync(join(ROOT, 'web/template.html'), 'utf8');
+  const css = readFileSync(join(ROOT, 'web/styles.css'), 'utf8');
+  ok(template.includes('<button data-view="assistant" class="tab">助手</button>'), '底部导航必须有助手');
+  ok(template.includes('<button data-view="me" class="tab">设置</button>'), '原我的入口只改名为设置');
+  ok(css.includes('grid-template-columns: repeat(6, 1fr)'), '六个底部导航入口必须均分');
+});
+
+t('纯网页版不展示教务系统一键提取和课表刷新入口', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  const template = readFileSync(join(ROOT, 'web/template.html'), 'utf8');
+  ok(app.includes('function hasNativeShell'), '必须能区分原生壳与纯网页版');
+  ok(app.includes('sync.hidden = !native'), '纯网页版必须隐藏课表刷新入口');
+  ok(app.includes('if (hasNativeShell())'), '登录教务系统入口只能由原生壳提供');
+  ok(template.includes('选择课表文件、截图，或使用书签小工具导入'), '网页引导不得宣传教务系统一键提取');
+});
+
+t('智能助手发送后清空问题并提供附件取消、历史对话和待办确认', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  const template = readFileSync(join(ROOT, 'web/template.html'), 'utf8');
+  ok(!app.includes('当前日期：${todayISO()}'), '注入提示词不得注入当前日期');
+  ok(app.includes('[YS_TODOS]') && app.includes('parseAssistantTodos'), '助手必须输出并解析待办机器区块');
+  ok(app.includes('showAssistantTodoConfirm'), '助手回答后必须让用户确认是否加入待办');
+  ok(app.includes("$('assistantQuestion').value = ''"), '发送后必须清空问题输入框');
+  ok(app.includes('assistantHistory') && app.includes('archiveAssistantConversation'), '必须保存并归档历史对话');
+  ok(app.includes('persistAssistantAttachment') && app.includes('assistantApiMessage'), '历史对话必须保留并恢复附件上下文');
+  ok(app.includes('btnAssistantCancelFile') && app.includes('clearAssistantAttachment'), '附件必须可取消');
+  ok(!template.includes('id="setAiPrompt"') && !template.includes('id="btnCopyAiPrompt"'), '不得展示或复制注入提示词');
+  ok(!template.includes('PDF请先复制文字'), 'PDF 已支持本机转换，不得继续提示用户手动复制文字');
+});
+
+t('课程触摸只在长按拖动后锁定页面', () => {
+  const css = readFileSync(join(ROOT, 'web/styles.css'), 'utf8');
+  ok(css.includes('touch-action: pan-y'), '普通触摸必须允许页面纵向滚动');
+  ok(css.includes('.course.dragging') && css.includes('touch-action: none'), '拖动状态必须锁定触摸滚动');
+});
+
+t('安卓教务 SSL 处理必须是域名和证书范围受限的', () => {
+  const src = readFileSync(join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/SchoolWeb.kt'), 'utf8');
+  ok(src.includes('isExpectedSchoolCertificate'), '必须有受限的学校证书判断');
+  ok(src.includes('handler.proceed()') && src.includes('handler.cancel()'), '只允许匹配学校证书时继续，否则取消');
+  ok(src.includes('GlobalSign RSA OV SSL CA 2018'), '必须校验预期证书颁发者');
+});
+
+t('安卓公告重复门铃不得重复弹通知', () => {
+  const src = readFileSync(join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/AnnPushService.kt'), 'utf8');
+  ok(src.includes('AnnouncementStatus.NO_NEW'), '必须区分没有新公告和拉取失败');
+  ok(src.includes('AnnouncementStatus.FRESH'), '必须只对新公告发送通知');
+});
+
+t('安卓主 WebView 支持文件选择器', () => {
+  const src = readFileSync(join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/MainActivity.kt'), 'utf8');
+  ok(src.includes('onShowFileChooser'), '安卓必须处理网页文件选择');
+  ok(src.includes('REQ_FILE') && src.includes('onReceiveValue(result)'), '安卓必须把选择结果回传 WebView');
+  ok(src.includes('allowContentAccess = true'), '安卓必须允许内容 URI 读取');
+});
+
+t('待办长按编辑时锁定页面移动', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  ok(app.includes('function bindTodoLongPress'), '待办必须有长按状态机');
+  ok(app.includes('todoEditLock'), '待办长按必须有滚动锁');
+  ok(app.includes('modalEditTodo'), '待办长按必须打开编辑界面');
+});
+
 t('品牌资源会注入页面模板', () => {
   const template = readFileSync(join(ROOT, 'web/template.html'), 'utf8');
   const build = readFileSync(join(ROOT, 'web/build.mjs'), 'utf8');
@@ -181,6 +339,46 @@ t('后台推送由网页端配置驱动，且状态如实回读', () => {
   ok(app.includes('后台推送已开启'), '界面要如实显示后台推送状态');
 });
 
+t('安卓 WebView 通知优先走原生壳，不能误报浏览器不支持', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  const shim = readFileSync(join(ROOT, 'shells/shim.js'), 'utf8');
+  const bridge = readFileSync(
+    join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/ShellBridge.kt'),
+    'utf8',
+  );
+  ok(app.includes('function sendSystemNotification'), '网页端应统一走通知发送助手');
+  ok(app.includes('shell.notify(title, body)'), '安卓壳应接管系统通知');
+  ok(app.includes('shell.requestNotifications'), '设置和测试按钮应请求原生通知权限');
+  ok(shim.includes('requestNotifications'), 'shim 必须暴露原生权限请求');
+  ok(bridge.includes('"requestNotifications" ->'), '安卓桥必须处理权限请求');
+});
+
+t('Windows 托盘通知权限请求必须回包，不能让共享设置开关挂起', () => {
+  const main = readFileSync(join(ROOT, 'shells/windows/MainForm.cs'), 'utf8');
+  ok(main.includes('case "requestNotifications"'), 'Windows 壳必须处理共享通知权限命令');
+  ok(main.includes('Reply(id, true, "{\\"granted\\":true}", null)'), 'Windows 托盘通知无需权限，应明确回成功');
+});
+
+t('安卓后台推送只在通知权限真实可用时报告 active', () => {
+  const main = readFileSync(
+    join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/MainActivity.kt'),
+    'utf8',
+  );
+  const notify = readFileSync(
+    join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/Notify.kt'),
+    'utf8',
+  );
+  const service = readFileSync(
+    join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/AnnPushService.kt'),
+    'utf8',
+  );
+  ok(main.includes('notificationsGranted'), '状态应报告通知权限');
+  ok(main.includes('onRequestPermissionsResult'), '拒绝权限后必须回包');
+  ok(notify.includes('areNotificationsEnabled'), '必须检查系统通知总开关');
+  ok(service.includes('active = startInForeground'), '前台服务必须以真实启动结果设置 active');
+  ok(service.includes('if (!Notify.notificationsEnabled(this)) return false'), '权限关闭时不能假报服务已运行');
+});
+
 t('推送载荷一律不可信：通知正文只能来自公告 JSON', () => {
   const svc = readFileSync(
     join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/AnnPushService.kt'),
@@ -235,6 +433,19 @@ t('登录表单在 iframe 里晚几百毫秒才建好，填表必须轮询而不
   ok(src.includes("'noform'"), '要认得出「表单还没建好」这一种返回');
   ok(src.includes('fillDone'), '真的填过并提交之后就不能再抢用户的输入框');
   ok(src.includes('sso.bistu.edu.cn'), '迟到的重试必须先确认人还在登录页');
+});
+
+t('安卓教务登录必须允许跨子域 Cookie，并在页签切换后再找动态表单', () => {
+  const src = readFileSync(
+    join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/SchoolWeb.kt'),
+    'utf8',
+  );
+  ok(src.includes('setAcceptThirdPartyCookies'), 'WebView 必须允许教务登录跨子域 Cookie');
+  ok(src.includes('CookieManager.getInstance().flush'), '抓取前必须刷新登录 Cookie');
+  const tab = src.indexOf('var tabs = findAll');
+  const fields = src.indexOf('var U = find(', tab);
+  ok(tab >= 0 && fields > tab, '必须先切到账号密码页签，再查动态生成的输入框');
+  ok(src.includes('input#username') && src.includes('autocomplete="current-password"'), '输入框选择器要兼容新版登录页');
 });
 
 t('登录页的页签是可记忆的（可能是扫码/短信页），填表前必须先切到账号密码', () => {
@@ -2041,6 +2252,134 @@ t('ocr: OCR 出来的课表也能一路走到事件列表', () => {
 });
 
 
+
+// ================================================================
+// 0c. 安全 / 本地存储 / CI 的回归护栏
+// 这一组全是「已经踩过一次，不想再踩」的东西：备份会把密钥带出去、
+// 存储配额撑爆会静默丢数据、CI 能被一个旧 tag 把线上站点回滚。
+
+t('备份文件里绝不能出现 API Key', () => {
+  const text = M.serializeBackup({
+    settings: { aiApiKey: 'sk-SECRET-123', theme: 'dark', aiModel: 'deepseek-flash' },
+    todos: [],
+  });
+  ok(!text.includes('sk-SECRET-123'), '备份里不能带 aiApiKey —— 备份天生是要发给别人的');
+  ok(!/"aiApiKey"\s*:/.test(text), '连字段名都不该出现，免得有人以为里面真有 key');
+  ok(text.includes('deepseek-flash') && text.includes('dark'), '其它设置必须照常保留');
+});
+
+t('恢复备份时保留本机的 API Key', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  ok(
+    /aiApiKey:\s*state\.settings\.aiApiKey\s*\|\|\s*''/.test(app),
+    '恢复备份要把本机已有的 key 抄回来，否则用户恢复一次备份就得重填 key',
+  );
+});
+
+t('助手附件的持久化上限必须小于 localStorage 总预算', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  const num = (name) => {
+    const m = app.match(new RegExp(`const ${name} = ([0-9_]+);`));
+    ok(m, `找不到常量 ${name}`);
+    return Number(m[1].replace(/_/g, ''));
+  };
+  const budget = num('MAX_STATE_CHARS');
+  const perAttachment = num('MAX_PERSISTED_ASSISTANT_IMAGE_BYTES');
+  ok(perAttachment < budget, `单个附件(${perAttachment})不能吃掉整个预算(${budget})`);
+  ok(budget <= 2_400_000, 'Chrome 的 5MB 配额按 UTF-16 字节算，字符预算不能超过 240 万');
+  ok(/function trimStateForStorage\(/.test(app), '必须有按体积淘汰的实现');
+  const save = app.slice(app.indexOf('function saveState()'));
+  ok(/trimStateForStorage\(/.test(save.slice(0, 900)), 'saveState 必须先淘汰再写');
+  ok(save.indexOf('trimStateForStorage(') < save.indexOf('setItem('), '淘汰必须发生在写入之前');
+  ok(/if \(json\.length > MAX_STATE_CHARS\)/.test(save), '只在超出预算时才重算 JSON，平时一次 stringify');
+  ok(/QuotaExceededError/.test(save.slice(0, 1500)), '写失败要能分辨「配额满」，并明确告诉用户这次没存上');
+});
+
+t('附件图片被配额裁掉时必须留下说明', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  ok(/note:\s*missing > 0/.test(app), 'persistAssistantAttachment 要记录少了几页图片');
+  ok(/attachment\.note/.test(app), 'assistantApiMessage 要把这句说明带给模型，否则它会以为看全了');
+});
+
+t('模型不收图片时必须退回纯文字再试，而不是让整个提问直接失败', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  ok(app.includes('const sendOnce ='), '请求要抽成可重发的 sendOnce');
+  ok(/result\.status === 400 \|\| result\.status === 422/.test(app), '只在 400/422（参数不合法）时重试；401/429 重发没意义');
+  ok(/const retry = await sendOnce\(textOnly\)/.test(app), '重试必须发纯文字版');
+  ok(app.includes('不接受图片输入'), '退回纯文字时要告诉用户，不能悄悄降级');
+});
+
+t('.gitignore 必须挡住自检产物与发版 zip', () => {
+  const lines = readFileSync(join(ROOT, '.gitignore'), 'utf8').split('\n').map((x) => x.trim());
+  for (const line of [
+    'shells/windows/.selfcheck-data/',
+    'shells/windows/selfcheck-build-report.txt',
+    'shells/windows/YangShanShell-*.zip',
+  ]) {
+    ok(lines.includes(line), `.gitignore 缺少 ${line}`);
+  }
+});
+
+t('CI 只能在分支上部署 Pages，且默认只读', () => {
+  const yml = readFileSync(join(ROOT, '.github/workflows/pages.yml'), 'utf8');
+  const head = yml.slice(0, yml.indexOf('\njobs:'));
+  ok(/contents:\s*read/.test(head), 'workflow 级默认权限应是只读');
+  ok(!/contents:\s*write/.test(head), '写权限必须下放到具体 job，不能写在 workflow 级');
+  const deploy = yml.slice(yml.indexOf('\n  deploy:'), yml.indexOf('\n  release:'));
+  ok(
+    /if:\s*github\.ref_type == 'branch'/.test(deploy),
+    'deploy 必须限定在分支上 —— 打一个指向旧提交的 tag 会把线上站点回滚',
+  );
+  ok(/pages:\s*write/.test(deploy) && /id-token:\s*write/.test(deploy), 'deploy 需要 pages / id-token 写权限');
+  const build = yml.slice(yml.indexOf('\n  build:'), yml.indexOf('\n  deploy:'));
+  ok(!/permissions:/.test(build), 'build job 不该单独要权限');
+});
+
+t('安卓抓取失败的结果不能被「已取消」覆盖', () => {
+  const src = readFileSync(
+    join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/SchoolActivity.kt'),
+    'utf8',
+  );
+  const onFailed = src.slice(src.indexOf('override fun onFailed'), src.indexOf('private fun shareDiagnostics'));
+  // 注释里也会出现这些词，先把 // 注释行去掉再比顺序。
+  const code = onFailed.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n');
+  ok(/done\s*=\s*true/.test(code), 'onFailed 必须把 done 置真，否则返回键会用「已取消」覆盖真实原因');
+  ok(code.indexOf('done = true') < code.indexOf('setResult'), 'done 要在 setResult 之前置真');
+  const close = src.slice(src.indexOf('private fun closeWithFailure'), src.indexOf('@Deprecated'));
+  ok(/if \(!done\)[\s\S]*school\.cancel\(\)/.test(close), '只有用户主动返回时才去 cancel');
+});
+
+t('后台刷新不得清空诊断日志', () => {
+  const src = readFileSync(
+    join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/DiagLog.kt'),
+    'utf8',
+  );
+  const begin = src.slice(src.indexOf('fun begin('), src.indexOf('fun event('));
+  ok(/clear\s*=\s*interactive/.test(begin), '只有用户主动发起的那次才能清空 —— 后台每小时一次会把失败原因覆盖掉');
+});
+
+t('UA 里的版本号必须来自 BuildConfig，不能手写', () => {
+  const src = readFileSync(
+    join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/SchoolWeb.kt'),
+    'utf8',
+  );
+  ok(src.includes('YangShanShell/${BuildConfig.VERSION_NAME}'), 'UA 版本号要从 BuildConfig 取');
+  ok(!/YangShanShell\/\d+\.\d+\.\d+/.test(src), '不能手写版本号 —— 写死过 0.2.0，而全局那时是 0.1.9');
+});
+
+t('README 必须写明「智能助手」是唯一的联网功能', () => {
+  const md = readFileSync(join(ROOT, 'README.md'), 'utf8');
+  ok(/智能助手：唯一的联网功能/.test(md), 'README 必须有这一节，否则「没有服务器」是误导');
+  ok(/api\.deepseek\.com/.test(md), '要写清默认发给谁');
+  ok(/settingsForBackup/.test(md), '要写清备份里会剔掉 Key');
+  ok(!/课表和账号密码永远不离开你自己的设备/.test(md), '「永远不离开」是错的 —— 助手会把材料发出去');
+});
+
+t('API 地址只接受 https（本机除外），免得 Key 明文上网', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  ok(/只能用 https:\/\/ 地址/.test(app), 'http:// 会把 Bearer Key 明文发出去，必须拦掉');
+  ok(app.includes('localhost|127\\.0\\.0\\.1'), '本机 localhost 要留例外，方便本地调试');
+});
 
 const total = pass + failures.length;
 console.log('');

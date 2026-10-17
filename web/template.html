@@ -31,7 +31,7 @@
       <div class="sub" id="termLabel">尚未导入课表</div>
     </div>
     <div class="topbar-actions">
-      <button class="icon-btn" id="btnSync" title="重新抓取课表">↻</button>
+      <button class="icon-btn" id="btnSync" title="重新抓取课表" aria-label="重新抓取课表">↻</button>
       <button class="icon-btn" id="btnSettings" title="设置">⚙</button>
     </div>
   </header>
@@ -42,7 +42,7 @@
     <section class="view" id="view-week">
       <div class="nowcard" id="nowCard"></div>
 
-      <div class="weekbar">
+      <div class="weekbar" id="weekbar">
         <button class="icon-btn" id="weekPrev" title="上一周">‹</button>
         <button class="weeklabel" id="weekLabel" title="点这里跳到指定周">
           <span class="wl-main" id="weekLabelMain">第 1 周</span>
@@ -50,6 +50,10 @@
         </button>
         <button class="icon-btn" id="weekNext" title="下一周">›</button>
         <button class="ghost-btn" id="weekToday">回到本周</button>
+      </div>
+      <div class="schedule-mode" role="tablist" aria-label="课表类型">
+        <button class="mode-btn active" id="modeWeek" role="tab" aria-selected="true">周课表</button>
+        <button class="mode-btn" id="modeTotal" role="tab" aria-selected="false">总课表</button>
       </div>
 
       <div class="grid-wrap">
@@ -87,6 +91,47 @@
       <div id="todoList"></div>
     </section>
 
+    <!-- ==================== 智能助手 ==================== -->
+    <section class="view" id="view-assistant" hidden>
+      <div class="sec-head">
+        <h2>智能助手</h2>
+        <span class="muted small" id="assistantStatus">未配置 API</span>
+      </div>
+      <div class="card">
+        <p class="muted small">上传通知截图、PDF、Word/PPT/文本，或直接粘贴长通知。PDF 会在本机逐页转换为图片后交给助手。</p>
+        <label class="file-drop assistant-drop" id="assistantDrop">
+          <input type="file" id="assistantFile" accept="image/*,.txt,.md,.json,.docx,.pptx,.pdf,application/pdf">
+          <b>选择通知文件</b>
+          <span class="muted small">支持图片、PDF、TXT、MD、JSON、DOCX、PPTX；PDF 仅在本机转换</span>
+        </label>
+        <div class="assistant-file" id="assistantFileName" hidden></div>
+        <button class="ghost-btn assistant-cancel-file" id="btnAssistantCancelFile" hidden>取消附件</button>
+        <textarea id="assistantQuestion" class="assistant-question" placeholder="例如：这条通知什么时候截止？我需要完成哪些事情？"></textarea>
+        <div class="btn-row">
+          <button class="primary-btn" id="btnAssistantAsk">分析并回答</button>
+          <button class="ghost-btn" id="btnAssistantClear">清空</button>
+        </div>
+      </div>
+      <div class="card assistant-answer-card" id="assistantAnswerCard" hidden>
+        <h3>回答</h3>
+        <div id="assistantAnswer" class="assistant-answer"></div>
+      </div>
+      <div class="card">
+        <div class="sec-head">
+          <h3>当前对话</h3>
+          <div class="btn-row">
+            <button class="ghost-btn" id="btnAssistantSaveChat">保存到历史</button>
+            <button class="ghost-btn" id="btnAssistantNewChat">新对话</button>
+          </div>
+        </div>
+        <div id="assistantConversation" class="assistant-conversation"></div>
+      </div>
+      <div class="card">
+        <div class="sec-head"><h3>历史对话</h3></div>
+        <div id="assistantHistory" class="assistant-history"></div>
+      </div>
+    </section>
+
     <!-- ==================== 公告 ==================== -->
     <section class="view" id="view-ann" hidden>
       <div class="sec-head">
@@ -96,7 +141,7 @@
       <div id="annList"></div>
     </section>
 
-    <!-- ==================== 我的 ==================== -->
+    <!-- ==================== 设置 ==================== -->
     <section class="view" id="view-me" hidden>
       <div class="card">
         <h3>导入课表</h3>
@@ -168,6 +213,34 @@
       </div>
 
       <div class="card">
+        <h3>智能助手 · DeepSeek</h3>
+        <p class="muted small">API Key 只保存在本机浏览器存储中。默认模型为 deepseek-flash；图片和文本会直接发送到你填写的 API 地址。</p>
+        <label class="row"><span>API 地址</span><input type="url" id="setAiBaseUrl" class="text-input" placeholder="https://api.deepseek.com"></label>
+        <label class="row"><span>API Key</span><input type="password" id="setAiApiKey" class="text-input" placeholder="sk-..."></label>
+        <label class="row"><span>模型</span><input type="text" id="setAiModel" class="text-input" placeholder="deepseek-flash"></label>
+        <label class="row"><span>联网增强</span><input type="checkbox" id="setAiOnline"></label>
+        <label class="row"><span>思考强度</span>
+          <select id="setAiReasoning">
+            <option value="off">关闭</option>
+            <option value="low">低</option>
+            <option value="medium">中</option>
+            <option value="high">高</option>
+          </select>
+        </label>
+        <div class="btn-row">
+          <button class="primary-btn" id="btnSaveAi">保存助手设置</button>
+        </div>
+        <p class="muted small" id="aiConfigStatus"></p>
+      </div>
+
+      <div class="card">
+        <h3>课表更改记录</h3>
+        <p class="muted small">这里保存本地课表相对教务系统的修改。刷新课表时可以选择继续保留，删除记录会立即撤销对应修改。</p>
+        <div id="scheduleChanges"></div>
+        <div class="btn-row"><button class="ghost-btn" id="btnClearScheduleChanges">删除全部记录</button></div>
+      </div>
+
+      <div class="card">
         <h3>公告源</h3>
         <p class="muted small">
           把班级里发的那串<b>分享码</b>（YSA1- 开头）粘进来就行 —— 它同时带着公告地址和推送频道。
@@ -220,8 +293,9 @@
     <button data-view="week" class="tab active">课表</button>
     <button data-view="day" class="tab">逐日</button>
     <button data-view="todo" class="tab">待办<span class="badge" id="badgeTodo" hidden></span></button>
+    <button data-view="assistant" class="tab">助手</button>
     <button data-view="ann" class="tab">公告<span class="badge" id="badgeAnn" hidden></span></button>
-    <button data-view="me" class="tab">我的</button>
+    <button data-view="me" class="tab">设置</button>
   </nav>
 
 </div>
@@ -232,7 +306,7 @@
     <h1>仰山课表</h1>
     <p class="muted">北京信息科技大学 · 零服务器 · 课表只存在你自己的设备上</p>
     <ol class="onboard-steps">
-      <li><b>拿到课表数据</b> —— 电脑上用内置浏览器版一键抓取；手机用书签小工具。</li>
+      <li><b>拿到课表数据</b> —— 选择课表文件、截图，或使用书签小工具导入。</li>
       <li><b>导入</b> —— 粘贴分享码或选择文件。</li>
       <li><b>订阅日历</b> —— 导出 .ics，上课提醒交给系统日历，最可靠。</li>
     </ol>
@@ -265,6 +339,7 @@
      单一来源 —— 用户就是照抄这份示例去建自己的公告源的，示例和解析器不能各写一份。 -->
 <script type="application/json" id="ann-example">/*{{ANN_EXAMPLE}}*/</script>
 <!--{{OCRLIBS}}-->
+<!--{{PDFJS}}-->
 
 <script type="module">
 /*{{CORE}}*/

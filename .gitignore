@@ -31,9 +31,19 @@ shells/windows/.dotnet/
 shells/windows/.nuget/
 # 自检时 --data 指过来的运行目录（里面会落一份 10 MB 的内核副本）。
 shells/windows/_runtime/
+# 自检的另一种落点：.selfcheck-data/ 同样是一份完整内核副本，再加上报告与发版 zip。
+# 这三样都是产物，不进仓库 —— 否则一次 git add -A 就往公开仓库塞约 18 MB。
+shells/windows/.selfcheck-data/
+shells/windows/selfcheck-build-report.txt
+shells/windows/YangShanShell-*.zip
+# 构建/自检时的临时落点。今天它们里面恰好只有 *.log（被上面的 *.log 顺手挡住），
+# 但那是巧合 —— 一旦落个非 .log 的文件就会变成未跟踪垃圾。
+shells/windows/.build-tmp/
+shells/windows/.nuget-scratch-*
 
 # ── 安卓壳（shells/android）────────────────────────────────────────────────
 shells/android/.gradle/
+shells/android/.kotlin/
 shells/android/build/
 shells/android/app/build/
 shells/android/local.properties

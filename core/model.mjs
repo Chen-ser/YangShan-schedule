@@ -140,6 +140,9 @@ function minimalPayload(pack) {
     w: normalizeTermWeeks(pack.termWeeks),
     l: (pack.arrangedList ?? []).map((c) => ({
       courseName: c.courseName,
+      courseId: c.courseId,
+      courseCode: c.courseCode,
+      classNo: c.classNo,
       dayOfWeek: c.dayOfWeek,
       beginSection: c.beginSection,
       endSection: c.endSection,
@@ -598,6 +601,19 @@ export function parseNoticeText(text) {
 
 // ---------------------------------------------------------------- 备份
 
+/**
+ * 备份文件天生是要「交给别人」的：换设备、发给同学、传到网盘、丢进群里。
+ * 所以导出时必须把密钥剔掉 —— 否则收备份的人顺手就能拿到你的 API Key。
+ * 导入端会保留本机原来那把 key，所以恢复备份不会把用户自己的 Key 弄丢。
+ */
+const SECRET_SETTING_KEYS = ['aiApiKey'];
+
+function settingsForBackup(settings) {
+  const out = { ...(settings && typeof settings === 'object' ? settings : {}) };
+  for (const k of SECRET_SETTING_KEYS) delete out[k];
+  return out;
+}
+
 export function serializeBackup(state) {
   return JSON.stringify(
     {
@@ -605,9 +621,13 @@ export function serializeBackup(state) {
       kind: 'backup',
       exportedAt: new Date().toISOString(),
       schedule: state?.schedule ?? null,
+      scheduleBase: state?.scheduleBase ?? null,
+      scheduleChanges: state?.scheduleChanges ?? [],
+      assistantCurrent: state?.assistantCurrent ?? null,
+      assistantHistory: state?.assistantHistory ?? [],
       todos: state?.todos ?? [],
       readAnnouncements: state?.readAnnouncements ?? [],
-      settings: state?.settings ?? {},
+      settings: settingsForBackup(state?.settings),
     },
     null,
     2,
@@ -628,6 +648,10 @@ export function parseBackup(text) {
     kind: 'backup',
     exportedAt: obj.exportedAt ?? '',
     schedule: obj.schedule ?? null,
+    scheduleBase: obj.scheduleBase ?? null,
+    scheduleChanges: Array.isArray(obj.scheduleChanges) ? obj.scheduleChanges : [],
+    assistantCurrent: obj.assistantCurrent && typeof obj.assistantCurrent === 'object' ? obj.assistantCurrent : null,
+    assistantHistory: Array.isArray(obj.assistantHistory) ? obj.assistantHistory : [],
     todos: Array.isArray(obj.todos) ? obj.todos : [],
     readAnnouncements: Array.isArray(obj.readAnnouncements) ? obj.readAnnouncements : [],
     settings: obj.settings && typeof obj.settings === 'object' ? obj.settings : {},

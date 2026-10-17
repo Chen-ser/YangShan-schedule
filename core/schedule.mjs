@@ -342,6 +342,19 @@ export function expandCourses(arrangedList, termWeeks, opts = {}) {
 
       events.push({
         uid,
+        courseId: course.courseId || fnv1a64([
+          opts.termCode ?? '',
+          course.courseCode || '',
+          course.courseName || '',
+          course.classNo || '',
+          course.teachingTarget || '',
+          course.dayOfWeek || '',
+          course.beginSection || '',
+          course.endSection || '',
+          course.week || course.weekBitmap || '',
+        ].join('|')),
+        courseCode: course.courseCode || '',
+        classNo: course.classNo || '',
         course: courseName,
         teacher,
         location,
@@ -373,11 +386,25 @@ export function buildSchedule(currentUser, termWeeks, scheduleDetail, opts = {})
   const studentCode =
     opts.studentCode || cu.userId || cu.user?.xh || cu.user?.usrId || cu.student?.xh || cu.welcomeInfo?.xh || '';
 
-  const list =
+  const rawList =
     scheduleDetail?.datas?.arrangedList ??
     scheduleDetail?.datas?.list ??
     scheduleDetail?.data?.rows ??
     (Array.isArray(scheduleDetail) ? scheduleDetail : []);
+  const list = rawList.map((course) => ({
+    ...course,
+    courseId: course.courseId || fnv1a64([
+      termCode,
+      course.courseCode || '',
+      course.courseName || '',
+      course.classNo || '',
+      course.teachingTarget || '',
+      course.dayOfWeek || '',
+      course.beginSection || '',
+      course.endSection || '',
+      course.week || course.weekBitmap || '',
+    ].join('|')),
+  }));
 
   const weeks = normalizeTermWeeks(termWeeks);
   const events = expandCourses(list, weeks, { termCode });

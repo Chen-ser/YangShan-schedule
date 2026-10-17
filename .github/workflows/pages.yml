@@ -13,10 +13,9 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+# 默认只读。写权限按 job 单独下发 —— 跑测试和构建的那个 job 不该能改仓库内容。
 permissions:
-  contents: write
-  pages: write
-  id-token: write
+  contents: read
 
 concurrency:
   group: pages-${{ github.ref }}
@@ -56,11 +55,19 @@ jobs:
           path: dist/仰山课表.html
 
   deploy:
+    # ⚠️ 这行 if: 是必须的，不要删。
+    # workflow 也被 tags: ['v*'] 触发，而 concurrency.group 里带了 github.ref ——
+    # 打一个指向旧提交的 tag 会走**另一个**并发组、不会取消 main 的部署，
+    # 于是 deploy 会把线上站点换回那个旧提交的内容（静默回滚）。
+    if: github.ref_type == 'branch'
     needs: build
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
@@ -69,6 +76,8 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:

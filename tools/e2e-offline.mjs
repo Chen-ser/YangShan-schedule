@@ -62,7 +62,7 @@ try {
   await new Promise((r) => setTimeout(r, 1500));
   const r2 = await s.evaluate(`(${phase2.toString()})()`, { timeoutMs: 120000 });
   for (const [k, v] of Object.entries(r2)) console.log(`  ${k}: ${v}`);
-  ok = r2.ready === '1' && r2.tabs === 5;
+  ok = r2.ready === '1' && r2.tabs === 6;
   console.log(ok
     ? `\nOFFLINE_OK 断网后仍能完整启动（缓存 ${cacheCount} 项）`
     : '\nOFFLINE_FAIL 断网后起不来');

@@ -5,10 +5,16 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.webkit.JavascriptInterface
+import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebChromeClient
+import android.webkit.ConsoleMessage
+import android.webkit.SslErrorHandler
+import android.net.Uri
+import android.net.http.SslError
 import org.json.JSONObject
 
 /**
@@ -55,9 +61,14 @@ class SchoolWeb(
          * 顺带一个好处：桌面版登录页 `normal/login-normal.html` 正是 [fillScript] 的
          * 选择器（`input[name=username]` / `button.btn-submit`）照着写的那一版。
          */
-        private const val DESKTOP_UA =
+        /**
+         * 尾部的 `YangShanShell/<版本>` 直接从 BuildConfig 取，不再手写。
+         * 手写过一次 `0.2.0`，而全局版本那时是 0.1.9 —— 给教务系统报一个不存在的
+         * 版本，查日志时对不上账。
+         */
+        private val DESKTOP_UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 YangShanShell/0.2.0"
+                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 YangShanShell/${BuildConfig.VERSION_NAME}"
 
         /** 有人盯着的时候给足时间（要过验证码、要手输），没人盯的静默刷新不等那么久。 */
         private const val TIMEOUT_VISIBLE_MS = 300_000L
@@ -100,6 +111,10 @@ class SchoolWeb(
         web.settings.javaScriptEnabled = true
         web.settings.domStorageEnabled = true
         web.settings.databaseEnabled = true
+        // 教务登录会在 jwxt 与 sso 两个子域之间跳转；WebView 默认可能拒绝
+        // iframe/跨子域 Cookie，表现为“登录成功后接口仍返回登录页”。
+        CookieManager.getInstance().setAcceptCookie(true)
+        CookieManager.getInstance().setAcceptThirdPartyCookies(web, true)
         // ★ 直接换成桌面版 UA。这里**不能**再拿 web.settings.userAgentString 去拼尾巴 ——
         //   那样得到的还是「安卓 UA + 后缀」，正好落进要躲开的那条手机分支。
         web.settings.userAgentString = DESKTOP_UA
@@ -111,9 +126,22 @@ class SchoolWeb(
         web.settings.displayZoomControls = false
         web.addJavascriptInterface(this, "YangShanNative")
         web.webViewClient = Client()
+        web.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
+                    DiagLog.event(
+                        "console-error source=${DiagLog.url(message.sourceId())} " +
+                            "line=${message.lineNumber()} chars=${message.message().length}",
+                    )
+                }
+                return true
+            }
+        }
     }
 
     fun start() {
+        DiagLog.begin(context, interactive)
+        DiagLog.event("start entry=${DiagLog.url(ENTRY)}")
         listener.onStep(if (interactive) "正在打开教务系统…" else "正在后台更新课表…")
         handler.postDelayed(timeout, if (interactive) TIMEOUT_VISIBLE_MS else TIMEOUT_SILENT_MS)
         web.loadUrl(ENTRY)
@@ -121,6 +149,7 @@ class SchoolWeb(
 
     fun cancel() {
         if (finished) return
+        DiagLog.event("cancel")
         finished = true
         handler.removeCallbacks(timeout)
         listener.onFailed("已取消")
@@ -138,11 +167,22 @@ class SchoolWeb(
         override fun onPageFinished(view: WebView, url: String) {
             if (finished) return
             lastUrl = url
+            DiagLog.event("page-finished url=${DiagLog.url(url)}")
+            DiagLog.event(
+                "cookies jwxt=${CookieManager.getInstance().getCookie(ENTRY) != null} " +
+                    "sso=${CookieManager.getInstance().getCookie("https://$SSO_HOST/") != null}",
+            )
+            view.evaluateJavascript(
+                "JSON.stringify({origin:location.origin,base:document.baseURI," +
+                    "online:navigator.onLine,secure:isSecureContext,fetch:typeof fetch})",
+            ) { value ->
+                if (!finished && !value.isNullOrBlank()) DiagLog.event("document-context $value")
+            }
             injectCaptureScript()
 
             val lower = url.lowercase()
             when {
-                lower.contains(SSO_HOST) -> onLoginPage(url)
+                lower.contains(SSO_HOST) || lower.contains("/normal/login") -> onLoginPage(url)
                 // ★ 只要落在教务系统的域上就抓，不再额外要求路径里有 `/jwapp/`：
                 //   抓取脚本只调接口、不看 DOM，登录后落到哪个页面都无所谓。
                 lower.contains(SCHOOL_HOST) -> {
@@ -150,6 +190,65 @@ class SchoolWeb(
                     handler.postDelayed({ triggerCapture() }, SETTLE_MS)
                 }
                 else -> listener.onStep("正在打开教务系统…")
+            }
+        }
+
+        override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+            if (!finished) DiagLog.event("page-started url=${DiagLog.url(url)}")
+            super.onPageStarted(view, url, favicon)
+        }
+
+        override fun onReceivedError(
+            view: WebView,
+            request: WebResourceRequest,
+            error: android.webkit.WebResourceError,
+        ) {
+            if (!finished && (request.isForMainFrame || request.url.host?.endsWith("bistu.edu.cn") == true)) {
+                DiagLog.event(
+                    "resource-error mainFrame=${request.isForMainFrame} url=${DiagLog.url(request.url.toString())} " +
+                        "code=${error.errorCode} desc=${error.description}",
+                )
+            }
+            super.onReceivedError(view, request, error)
+        }
+
+        override fun onReceivedHttpError(
+            view: WebView,
+            request: WebResourceRequest,
+            errorResponse: WebResourceResponse,
+        ) {
+            if (!finished && (request.isForMainFrame || request.url.host?.endsWith("bistu.edu.cn") == true)) {
+                DiagLog.event(
+                    "resource-http mainFrame=${request.isForMainFrame} url=${DiagLog.url(request.url.toString())} " +
+                        "status=${errorResponse.statusCode}",
+                )
+            }
+            super.onReceivedHttpError(view, request, errorResponse)
+        }
+
+        override fun onReceivedSslError(
+            view: WebView,
+            handler: SslErrorHandler,
+            error: SslError,
+        ) {
+            val url = error.url.orEmpty()
+            if (!finished) {
+                val cert = error.certificate
+                val issuer = cert.issuedBy?.dName.orEmpty().take(180)
+                val subject = cert.issuedTo?.dName.orEmpty().take(180)
+                DiagLog.event(
+                    "ssl-error rejected url=${DiagLog.url(url)} primary=${error.primaryError} " +
+                        "subject=$subject issuer=$issuer",
+                )
+            }
+            // 只对学校域名、明确的 SSL_UNTRUSTED、匹配学校通配证书且仍在有效期内的
+            // 情况做窄范围恢复。其他错误（过期、主机名不匹配、非学校域名）一律拒绝，
+            // 不能为了让登录成功而放行任意证书。
+            if (isExpectedSchoolCertificate(error)) {
+                DiagLog.event("ssl-error proceed-school-cert url=${DiagLog.url(url)}")
+                handler.proceed()
+            } else {
+                handler.cancel()
             }
         }
 
@@ -162,9 +261,26 @@ class SchoolWeb(
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? = null
     }
 
+    private fun isExpectedSchoolCertificate(error: SslError): Boolean {
+        if (error.primaryError != SslError.SSL_UNTRUSTED) return false
+        val host = Uri.parse(error.url.orEmpty()).host?.lowercase() ?: return false
+        if (host != "bistu.edu.cn" && !host.endsWith(".bistu.edu.cn")) return false
+        val cert = error.certificate ?: return false
+        val subject = cert.issuedTo?.dName.orEmpty()
+        val issuer = cert.issuedBy?.dName.orEmpty()
+        val subjectMatches = subject.contains("CN=*.bistu.edu.cn", ignoreCase = true) ||
+            subject.contains("CN=$host", ignoreCase = true)
+        val issuerMatches = issuer.contains("GlobalSign RSA OV SSL CA 2018", ignoreCase = true)
+        val now = java.util.Date()
+        val inDateRange = cert.validNotBeforeDate?.before(now) == true &&
+            cert.validNotAfterDate?.after(now) == true
+        return subjectMatches && issuerMatches && inDateRange
+    }
+
     // ── 登录页 ──────────────────────────────────────────────────────────────
 
     private fun onLoginPage(url: String) {
+        DiagLog.event("login-page url=${DiagLog.url(url)} fillTries=$fillTries")
         if (user.isNullOrBlank() || pass.isNullOrBlank()) {
             listener.onStep("请在这个窗口里登录学校统一身份认证。")
             return
@@ -180,14 +296,17 @@ class SchoolWeb(
             if (finished) return@evaluateJavascript
             when (val r = value?.trim('"') ?: "") {
                 "captcha" -> {
+                    DiagLog.event("login-form captcha")
                     fillDone = true
                     listener.onStep("登录页要验证码，麻烦你手动填一下。")
                 }
                 "submitted" -> {
+                    DiagLog.event("login-form submitted")
                     fillDone = true
                     listener.onStep("已经提交登录，正在等课表…")
                 }
                 "noform" -> {
+                    DiagLog.event("login-form not-ready try=$fillTries")
                     // ★ 表单在 iframe 里，比 onPageFinished 晚几百毫秒才建好 ——
                     //   实测 t=647ms 顶层才 complete，t=1025ms 表单才出现（差约 380 ms）。
                     //   所以第一次调这个脚本基本必然落在这里，靠轮询解决。
@@ -225,11 +344,16 @@ class SchoolWeb(
     private fun fillScript(u: String, p: String): String = """
         (function () {
           function docs() {
-            var out = [document];
-            var fs = document.querySelectorAll('iframe');
-            for (var i = 0; i < fs.length; i++) {
-              try { if (fs[i].contentDocument) out.push(fs[i].contentDocument); } catch (e) {}
+            var out = [];
+            function add(doc) {
+              if (!doc || out.indexOf(doc) >= 0) return;
+              out.push(doc);
+              var fs = doc.querySelectorAll('iframe');
+              for (var i = 0; i < fs.length; i++) {
+                try { add(fs[i].contentDocument); } catch (e) {}
+              }
             }
+            add(document);
             return out;
           }
           function findAll(sel) {
@@ -243,20 +367,22 @@ class SchoolWeb(
           function find(sel) { var a = findAll(sel); return a.length ? a[0] : null; }
           function visible(el) { return !!el && el.offsetParent !== null; }
 
-          var U = find('input[name="username"]');
-          var P = find('input[name="password"]');
-          if (!U || !P) return 'noform';
-
           // 页签选中的是哪一个会被 localStorage 记住（可能是扫码/短信页），
           // 而账号口令表单被 v-show 藏着。先切到「账号密码」，
           // 用户接手时才能看见自己该看的那一屏。
-          var tabs = findAll('.content-tabs-title > div');
+          var tabs = findAll('.content-tabs-title > div, [role="tab"], .tabs-title > *');
           for (var i = 0; i < tabs.length; i++) {
             if (/账号密码|帳號密碼|password/i.test(tabs[i].textContent || '')) {
               tabs[i].click();
               break;
             }
           }
+
+          // 有些版本用 v-if，切页签后才把输入框插入 DOM；这次找不到就交给
+          // 外层轮询，下一轮会在 Vue 更新完成后重新查找。
+          var U = find('input[name="username"], input#username, input[autocomplete="username"]');
+          var P = find('input[name="password"], input#password, input[autocomplete="current-password"]');
+          if (!U || !P) return 'noform';
 
           function setValue(el, v) {
             var d = Object.getOwnPropertyDescriptor(el.constructor.prototype, 'value');
@@ -302,6 +428,7 @@ class SchoolWeb(
             fail("客户端里没有内置抓取脚本，这是个打包问题。")
             return
         }
+        DiagLog.event("capture-script injected bytes=${src.length}")
         web.evaluateJavascript(src, null)
     }
 
@@ -312,6 +439,8 @@ class SchoolWeb(
     private fun triggerCapture() {
         if (finished) return
         captureTries++
+        CookieManager.getInstance().flush()
+        DiagLog.event("capture-call try=$captureTries url=${DiagLog.url(lastUrl)}")
         web.evaluateJavascript(CAPTURE_CALL, null)
     }
 
@@ -342,18 +471,22 @@ class SchoolWeb(
             return
         }
         when (m.optString("cmd")) {
+            "log" -> m.stringOrNull("message")?.let { DiagLog.event("capture-log $it") }
             "step" -> {
                 val text = m.stringOrNull("message")
+                if (!text.isNullOrBlank()) DiagLog.event("capture-step $text")
                 if (!text.isNullOrBlank()) listener.onStep(text)
             }
             "captured" -> {
                 if (m.optBoolean("ok") && m.stringOrNull("raw") != null) {
+                    DiagLog.event("capture-success rawChars=${m.getString("raw").length}")
                     if (finished) return
                     finished = true
                     handler.removeCallbacks(timeout)
                     listener.onCaptured(m.getString("raw"))
                 } else {
                     val err = m.stringOrNull("error")
+                    DiagLog.event("capture-failure error=${err.orEmpty()}")
                     // ★ 页面刚换过去时脚本可能还没落地、或接口暂时返回登录页 —— 这两种重试就好，
                     //   没必要把用户打回去重走一遍登录。
                     if (retryable(err) && captureTries < CAPTURE_MAX_TRIES) {
@@ -373,6 +506,7 @@ class SchoolWeb(
 
     private fun fail(reason: String) {
         if (finished) return
+        DiagLog.event("failed reason=$reason")
         finished = true
         handler.removeCallbacks(timeout)
         listener.onFailed(reason)
@@ -397,6 +531,8 @@ private const val CAPTURE_CALL = """
   }
   __ysCapture({ source: 'android', onStep: function (m) {
     YangShanNative.post(JSON.stringify({ cmd: 'step', message: String(m) }));
+  }, onLog: function (m) {
+    YangShanNative.post(JSON.stringify({ cmd: 'log', message: String(m) }));
   } }).then(function (r) {
     YangShanNative.post(JSON.stringify({ cmd: 'captured', ok: true, raw: JSON.stringify(r) }));
   }).catch(function (e) {

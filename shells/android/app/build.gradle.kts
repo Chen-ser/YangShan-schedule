@@ -7,6 +7,10 @@ android {
     namespace = "dev.yangshan.schedule"
     compileSdk = 35
 
+    buildFeatures {
+        buildConfig = true
+    }
+
     // 本机 SDK 里只装了 build-tools 36.0.0（没有 35.0.0），显式指定免得 AGP
     // 去自动下载一个不存在的版本。build-tools 只要求不低于某个下限，用新的没问题。
     buildToolsVersion = "36.0.0"
@@ -17,8 +21,8 @@ android {
         // 不用为老系统写一堆分支；2026 年这个下限不会挡到任何在读的同学。
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 10
+        versionName = "0.1.9"
         resourceConfigurations += listOf("zh", "en")
     }
 

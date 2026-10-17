@@ -22,6 +22,12 @@ const DEFAULT_SETTINGS = {
   annTopic: '',
   // 收到新公告时弹不弹系统通知（默认关：未经用户同意就弹窗是很讨嫌的行为）
   annNotify: false,
+  // 智能助手配置：只保存在本机，不会随课表分享码导出。
+  aiBaseUrl: 'https://api.deepseek.com',
+  aiApiKey: '',
+  aiModel: 'deepseek-flash',
+  aiOnline: false,
+  aiReasoning: 'medium',
 };
 
 // ================================================================ 工具
@@ -101,6 +107,8 @@ const cnDate = (iso) => {
 
 let state = {
   schedule: null,
+  scheduleBase: null,
+  scheduleChanges: [],
   todos: [],
   readAnnouncements: [],
   announcements: [],
@@ -108,10 +116,13 @@ let state = {
   localAnnouncements: [],
   announcementsFetchedAt: '',
   settings: { ...DEFAULT_SETTINGS },
+  assistantCurrent: null,
+  assistantHistory: [],
 };
 
 let ui = {
   view: 'week',
+  scheduleMode: 'week',
   week: null,      // 当前显示的教学周
   day: todayISO(), // 逐日视图的日期
 };
@@ -123,16 +134,24 @@ function loadState() {
     const o = JSON.parse(raw);
     state = {
       schedule: o.schedule ?? null,
+      scheduleBase: o.scheduleBase ?? o.schedule ?? null,
+      scheduleChanges: Array.isArray(o.scheduleChanges) ? o.scheduleChanges : [],
       todos: Array.isArray(o.todos) ? o.todos : [],
       readAnnouncements: Array.isArray(o.readAnnouncements) ? o.readAnnouncements : [],
       announcements: Array.isArray(o.announcements) ? o.announcements : [],
       localAnnouncements: Array.isArray(o.localAnnouncements) ? o.localAnnouncements : [],
       announcementsFetchedAt: o.announcementsFetchedAt ?? '',
       settings: { ...DEFAULT_SETTINGS, ...(o.settings ?? {}) },
+      assistantCurrent: o.assistantCurrent ?? null,
+      assistantHistory: Array.isArray(o.assistantHistory) ? o.assistantHistory : [],
     };
-    if (state.schedule) {
+    if (state.scheduleBase) {
       // 重新展开一遍：万一课表是从旧版本存下来的，保证和当前核心逻辑一致
-      state.schedule = normalizeSchedulePack(state.schedule);
+      state.scheduleBase = ensureEditableEntryIds(normalizeSchedulePack(state.scheduleBase));
+      state.schedule = applyScheduleChanges(state.scheduleBase, state.scheduleChanges);
+    } else if (state.schedule) {
+      state.scheduleBase = ensureEditableEntryIds(normalizeSchedulePack(state.schedule));
+      state.schedule = applyScheduleChanges(state.scheduleBase, state.scheduleChanges);
     }
     return true;
   } catch (e) {
@@ -141,14 +160,280 @@ function loadState() {
   }
 }
 
-function saveState() {
+function courseIdentity(c, termCode = '') {
+  if (c?.__ysEntryId) return String(c.__ysEntryId);
+  if (c?.courseId) return String(c.courseId);
+  return fnv1a64([
+    termCode,
+    c?.courseCode || '',
+    c?.courseName || '',
+    c?.classNo || '',
+    c?.teachingTarget || '',
+    c?.dayOfWeek || '',
+    c?.beginSection || '',
+    c?.endSection || '',
+    c?.week || c?.weekBitmap || '',
+  ].join('|'));
+}
+
+function ensureEditableEntryIds(pack) {
+  if (!pack?.arrangedList) return pack;
+  return {
+    ...pack,
+    arrangedList: pack.arrangedList.map((course) => ({
+      ...course,
+      __ysEntryId: course.__ysEntryId || fnv1a64([
+        pack.termCode || '',
+        course.courseId || '',
+        course.courseCode || '',
+        course.courseName || '',
+        course.classNo || '',
+        course.teachingTarget || '',
+        course.dayOfWeek || '',
+        course.beginSection || '',
+        course.endSection || '',
+        course.week || course.weekBitmap || '',
+      ].join('|')),
+    })),
+  };
+}
+
+function sectionSpan(item) {
+  const begin = Math.min(13, Math.max(1, Number(item?.beginSection) || 1));
+  const end = Math.min(13, Math.max(begin, Number(item?.endSection) || begin));
+  return { begin, end, duration: end - begin + 1 };
+}
+
+function clockMinutes(value) {
+  const normalized = normTime(value);
+  if (!normalized) return null;
+  const [hours, minutes] = normalized.split(':').map(Number);
+  return hours * 60 + minutes;
+}
+
+function sectionForClock(value, fallback) {
+  const minutes = clockMinutes(value);
+  if (minutes == null) return fallback;
+  for (let i = 0; i < SECTION_TIMES.length; i++) {
+    const start = clockMinutes(SECTION_TIMES[i].start);
+    const end = clockMinutes(SECTION_TIMES[i].end);
+    if (minutes >= start && minutes <= end) return i + 1;
+  }
+  let nearest = fallback;
+  for (let i = 0; i < SECTION_TIMES.length; i++) {
+    if (minutes >= clockMinutes(SECTION_TIMES[i].start)) nearest = i + 1;
+  }
+  return nearest;
+}
+
+function courseVisualInsets(item) {
+  const span = sectionSpan(item);
+  const start = clockMinutes(item?.beginTime || item?.start) ?? clockMinutes(SECTION_TIMES[span.begin - 1].start);
+  const end = clockMinutes(item?.endTime || item?.end) ?? clockMinutes(SECTION_TIMES[span.end - 1].end);
+  const sectionStart = clockMinutes(SECTION_TIMES[span.begin - 1].start);
+  const sectionEnd = clockMinutes(SECTION_TIMES[span.begin - 1].end);
+  const lastSectionStart = clockMinutes(SECTION_TIMES[span.end - 1].start);
+  const lastSectionEnd = clockMinutes(SECTION_TIMES[span.end - 1].end);
+  const top = Math.max(0, Math.min(45, ((start - sectionStart) / Math.max(1, sectionEnd - sectionStart)) * 46));
+  const bottom = Math.max(0, Math.min(45, ((lastSectionEnd - end) / Math.max(1, lastSectionEnd - lastSectionStart)) * 46));
+  return {
+    marginTop: `${(1 + top).toFixed(2)}px`,
+    marginBottom: `${(1 + bottom).toFixed(2)}px`,
+  };
+}
+
+function teacherOf(c) {
+  if (c?.teacher) return c.teacher;
+  return splitWeeksTeachers(String(c?.weeksAndTeachers || '')).teacher;
+}
+
+function withTeacher(c, teacher) {
+  const text = String(c?.weeksAndTeachers || '');
+  if (!text) return teacher ? { ...c, teacher, weeksAndTeachers: `1-99周/${teacher}` } : { ...c, teacher: '' };
+  const groups = text.split(/[;；]/).map((g) => g.trim()).filter(Boolean);
+  const next = groups.map((g) => {
+    const i = g.lastIndexOf('/');
+    const wk = i >= 0 ? g.slice(0, i).trim() : g;
+    return teacher ? `${wk}/${teacher}` : wk;
+  }).join('; ');
+  return { ...c, teacher, weeksAndTeachers: next };
+}
+
+function applyScheduleChanges(base, changes = []) {
+  if (!base) return null;
+  const pack = ensureEditableEntryIds(normalizeSchedulePack(base));
+  const list = pack.arrangedList.map((c) => ({ ...c }));
+  const termChanges = (changes || []).filter((x) => x.scope === 'term');
+  for (const change of termChanges) {
+    const i = list.findIndex((c) => courseIdentity(c, pack.termCode) === change.courseId);
+    if (i < 0) continue;
+    let c = { ...list[i], ...(change.fields || {}) };
+    if (Object.prototype.hasOwnProperty.call(change.fields || {}, 'teacher')) c = withTeacher(c, change.fields.teacher);
+    list[i] = c;
+  }
+  const next = ensureEditableEntryIds(normalizeSchedulePack({ ...pack, arrangedList: list, events: null }));
+  const weekChanges = (changes || []).filter((x) => x.scope === 'week');
+  for (const change of weekChanges) {
+    const e = next.events.find((item) =>
+      item.uid === change.eventId ||
+      (item.courseId === change.courseId && item.week === change.week));
+    if (!e) continue;
+    Object.assign(e, change.fields || {});
+  }
+  next.events.sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
+  return next;
+}
+
+function rebuildSchedule() {
+  state.schedule = applyScheduleChanges(state.scheduleBase, state.scheduleChanges);
+}
+
+function changeLabel(change) {
+  return change.scope === 'week' ? `第 ${change.week} 周 · 周课表` : '总课表 · 全学期';
+}
+
+function upsertChange(change) {
+  const key = change.scope === 'week'
+    ? `${change.scope}:${change.eventId}`
+    : `${change.scope}:${change.courseId}`;
+  const idx = state.scheduleChanges.findIndex((x) => {
+    const k = x.scope === 'week' ? `${x.scope}:${x.eventId}` : `${x.scope}:${x.courseId}`;
+    return k === key;
+  });
+  if (idx >= 0) state.scheduleChanges[idx] = { ...state.scheduleChanges[idx], ...change, updatedAt: new Date().toISOString() };
+  else state.scheduleChanges.push({ ...change, updatedAt: new Date().toISOString() });
+}
+
+function removeChange(index) {
+  state.scheduleChanges.splice(index, 1);
+  rebuildSchedule();
+  saveState();
+  renderAll();
+  toast('已撤销这条课表修改');
+}
+
+/**
+ * localStorage 的配额是按「字符数」算的，而各浏览器给的是 5 MB 上下（Chrome 记的是
+ * UTF-16 字节，实际只够约 260 万字符）。课表、待办、公告已读、助手会话**全挤在同一个
+ * key** 里，助手附件（图片 / PDF 转出来的图）最容易把它撑爆。
+ *
+ * 撑爆的后果不是「图片存不下」，而是**整条 setItem 抛错** —— 待办、已读、课表改动
+ * 一起悄悄不落盘，用户重开页面才发现没了。所以这里先按体积淘汰，再写。
+ */
+const MAX_STATE_CHARS = 2_400_000;
+
+function stateChars() {
   try {
-    localStorage.setItem(LS_KEY, JSON.stringify(state));
+    return JSON.stringify(state).length;
+  } catch {
+    return Infinity;
+  }
+}
+
+/**
+ * 把状态压到配额以内。淘汰顺序（尽可能少丢东西）：
+ *   1. 由老到新，丢掉历史会话里附件的图片（附件文字与文件名都留着）
+ *   2. 还是超，就整条丢掉最老的会话（至少留 1 条）
+ *   3. 再超，就把附件文字截到 2000 字
+ *
+ * ⚠️ saveState() 会被频繁调用（拖字号、勾选待办……），而整个 state 可能有几 MB。
+ * 所以这里只 stringify 一次算初始超额，之后用「被移除内容的长度」递减估算，
+ * 不要再每步都 stringify 一遍 —— 那是 O(n²)，会卡住主线程。
+ *
+ * @returns {{ droppedConversations: number, droppedImages: number }}
+ */
+function trimStateForStorage(startChars = stateChars()) {
+  let droppedConversations = 0;
+  let droppedImages = 0;
+  let over = startChars - MAX_STATE_CHARS;
+  if (over <= 0) return { droppedConversations, droppedImages };
+
+  const history = Array.isArray(state.assistantHistory) ? state.assistantHistory : [];
+  // assistantHistory 是「新的在前」，所以从尾部开始才是从老到新。
+  for (let i = history.length - 1; i >= 0 && over > 0; i -= 1) {
+    for (const message of history[i]?.messages || []) {
+      const attachment = message?.attachment;
+      if (!attachment) continue;
+      const images = Array.isArray(attachment.images) ? attachment.images : [];
+      const image = typeof attachment.image === 'string' ? attachment.image : '';
+      // image 通常就是 images[0]，JSON 里存了两份；两份都要扣掉，但只算一次「张数」。
+      const counted = images.length || (image ? 1 : 0);
+      if (images.length) {
+        for (const one of images) over -= one.length;
+        attachment.images = [];
+      }
+      if (image) {
+        over -= image.length;
+        attachment.image = '';
+      }
+      droppedImages += counted;
+    }
+  }
+
+  while (over > 0 && history.length > 1) {
+    const dropped = history.pop();
+    droppedConversations += 1;
+    over -= JSON.stringify(dropped).length;
+  }
+
+  for (let i = history.length - 1; i >= 0 && over > 0; i -= 1) {
+    for (const message of history[i]?.messages || []) {
+      const text = message?.attachment?.text;
+      if (typeof text === 'string' && text.length > 2000) {
+        over -= text.length - 2000;
+        message.attachment.text = text.slice(0, 2000);
+      }
+    }
+  }
+
+  return { droppedConversations, droppedImages };
+}
+
+function saveState() {
+  // 只序列化一次。saveState() 在拖字号、勾待办时会被高频调用，
+  // 而 state 可能有几 MB —— 先 stringify 一次拿长度，超了才重算。
+  let json;
+  try {
+    json = JSON.stringify(state);
+  } catch (e) {
+    toast('保存失败：本地数据无法序列化（程序错误）。请立刻导出备份并反馈。', 7000);
+    console.warn('序列化本地数据失败', e);
+    return;
+  }
+  let droppedConversations = 0;
+  let droppedImages = 0;
+  if (json.length > MAX_STATE_CHARS) {
+    ({ droppedConversations, droppedImages } = trimStateForStorage(json.length));
+    try {
+      json = JSON.stringify(state);
+    } catch {
+      return;
+    }
+  }
+  try {
+    localStorage.setItem(LS_KEY, json);
     localStorage.setItem(LS_KEY + '/updatedAt', String(Date.now()));
   } catch (e) {
-    // iOS 上 Safari 可能因为存储配额清理 localStorage，也会在无痕模式下直接抛错
-    toast('保存失败：浏览器存储不可用。建议立刻导出备份。', 5000);
+    // iOS 上 Safari 可能因为存储配额清理 localStorage，也会在无痕模式下直接抛错。
+    // 说到这里就必须说清楚：这次没存上，刷新就没了 —— 不能只用一句"存储不可用"糊过去。
+    const quota = e && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED');
+    toast(
+      quota
+        ? '本地空间已满，这次改动没存上。请到「助手」删掉几条带图片的历史会话，再导出一次备份。'
+        : '保存失败：浏览器存储不可用（无痕模式会这样）。建议立刻导出备份。',
+      7000,
+    );
     console.warn('保存本地数据失败', e);
+    return;
+  }
+  if (droppedConversations || droppedImages) {
+    // 淘汰是静默的数据损失，必须告诉用户，否则他会以为自己的会话还在。
+    toast(
+      `本地空间不够，已清理较早的助手附件（${droppedImages} 张图片）` +
+        (droppedConversations ? ` 和 ${droppedConversations} 条最早的会话` : '') +
+        '。课表、待办没有动。',
+      6000,
+    );
   }
 }
 
@@ -166,6 +451,8 @@ function switchView(name) {
   if (name === 'day') renderDay();
   if (name === 'todo') renderTodos();
   if (name === 'ann') renderAnnouncements();
+  if (name === 'assistant') renderAssistant();
+  if (name === 'me') renderScheduleChanges();
 }
 
 // ================================================================ 周课表
@@ -225,6 +512,10 @@ function renderWeek() {
   renderHeader();
   renderNowCard();
   if (!state.schedule) return;
+  if (ui.scheduleMode === 'total') {
+    renderTotalSchedule();
+    return;
+  }
 
   const weeks = state.schedule.termWeeks ?? [];
   if (!weeks.length) return;
@@ -264,18 +555,15 @@ function renderWeek() {
     );
   });
 
-  // ---- 找出这一周实际用到的节次范围，只渲染这一段，避免大片空白
+  // ---- 始终渲染完整节次范围，保证拖拽可以落到空白的末节，也避免时间轴随周次跳动
   const list = state.schedule.events.filter((e) => e.week === w.serialNumber && (!hideWeekend || e.dayOfWeek <= 5));
-  let rowStart = 1;
-  let rowEnd = 13;
-  if (list.length) {
-    rowStart = Math.min(...list.map((e) => e.beginSection));
-    rowEnd = Math.max(...list.map((e) => e.endSection));
-  }
+  const rowStart = 1;
+  const rowEnd = 13;
   const rowCount = rowEnd - rowStart + 1;
 
   const body = $('gridBody');
   body.style.setProperty('--days', dayCount);
+  body.dataset.rowStart = String(rowStart);
   body.style.gridTemplateRows = `repeat(${rowCount}, 46px)`;
   body.replaceChildren();
 
@@ -292,6 +580,7 @@ function renderWeek() {
     for (let i = 0; i < dayCount; i++) {
       body.append(h('div', {
         class: 'gd-cell' + (dates[i] === today ? ' today' : ''),
+        dataset: { day: String(i + 1), section: String(s) },
         style: { gridColumn: String(i + 2), gridRow: String(gridRow) },
       }));
     }
@@ -300,22 +589,25 @@ function renderWeek() {
   // 课程块：与背景格子放在同一个 grid 里，靠 grid-row/grid-column 定位
   for (const e of list) {
     const col = e.dayOfWeek + 1;
-    body.append(
-      h('div', {
+    const courseNode = h('div', {
         class: 'course ' + colorOf(e.course),
         style: {
           gridColumn: String(col),
           gridRow: `${e.beginSection - rowStart + 1} / ${e.endSection - rowStart + 2}`,
           zIndex: '1',
+          ...courseVisualInsets(e),
         },
         title: `${e.course}\n${e.location || ''}\n${e.teacher || ''}`,
-        onclick: () => showCourseDetail(e),
+        onclick: () => {
+          if (!courseNode._dragged && !courseNode._suppressClick) showCourseEditor(e, 'week');
+        },
       },
         h('b', {}, e.course),
         e.location ? h('i', {}, e.location) : null,
         h('span', { class: 'ct' }, `${e.beginSection}-${e.endSection}节`),
-      ),
-    );
+      );
+    bindCourseDrag(courseNode, e, 'week');
+    body.append(courseNode);
   }
 
   if (!list.length) {
@@ -329,6 +621,87 @@ function renderWeek() {
 
   renderLegend(list);
   renderUnscheduled();
+}
+
+function renderTotalSchedule() {
+  const weeks = state.schedule?.termWeeks ?? [];
+  const hideWeekend = state.settings.hideWeekend;
+  const dayCount = hideWeekend ? 5 : 7;
+  const list = (state.schedule?.arrangedList ?? []).filter((c) => Number(c.dayOfWeek) >= 1 && Number(c.dayOfWeek) <= dayCount);
+  const body = $('gridBody');
+  const head = $('gridHead');
+  head.style.setProperty('--days', dayCount);
+  head.replaceChildren(h('div', { class: 'gh-cell' }, ''));
+  for (let i = 0; i < dayCount; i++) {
+    head.append(h('div', { class: 'gh-cell' }, h('b', {}, '周' + WEEKDAY_NAMES[i]), '全学期'));
+  }
+  body.style.setProperty('--days', dayCount);
+  body.style.gridTemplateRows = 'repeat(13, 46px)';
+  body.replaceChildren();
+  for (let s = 1; s <= 13; s++) {
+    body.append(h('div', {
+      class: 'gd-time',
+      style: { gridColumn: '1', gridRow: String(s) },
+    }, h('span', {}, String(s)), h('span', {}, (SECTION_TIMES[s - 1]?.start ?? '').slice(0, 5))));
+    for (let d = 0; d < dayCount; d++) {
+      body.append(h('div', {
+        class: 'gd-cell',
+        dataset: { day: String(d + 1), section: String(s) },
+        style: { gridColumn: String(d + 2), gridRow: String(s) },
+      }));
+    }
+  }
+  for (const c of list) {
+    const begin = Number(c.beginSection) || 1;
+    const end = Number(c.endSection) || begin;
+    const weekText = parseWeekBitmap(c.week || c.weekBitmap || '').length
+      ? weeksToText(parseWeekBitmap(c.week || c.weekBitmap || ''))
+      : String(c.weeksAndTeachers || '').split('/')[0] || '全学期';
+    const teacher = teacherOf(c);
+    const base = (state.scheduleBase?.arrangedList ?? []).find((x) =>
+      courseIdentity(x, state.scheduleBase.termCode) === courseIdentity(c, state.scheduleBase.termCode));
+    const displayCourse = { ...c, __courseId: base ? courseIdentity(base, state.scheduleBase.termCode) : courseIdentity(c, state.scheduleBase.termCode) };
+    const node = h('div', {
+      class: 'course ' + colorOf(c.courseName),
+      style: {
+        gridColumn: String(Number(c.dayOfWeek) + 1),
+        gridRow: `${begin} / ${end + 1}`,
+        zIndex: '1',
+        ...courseVisualInsets(c),
+      },
+      title: `${c.courseName}\n${c.placeName || ''}\n${teacher || ''}\n${weekText}`,
+      onclick: () => {
+        if (!node._dragged && !node._suppressClick) showCourseEditor(displayCourse, 'term');
+      },
+    },
+      h('b', {}, c.courseName),
+      c.placeName ? h('i', {}, c.placeName) : null,
+      h('span', { class: 'ct' }, `${weekText} · ${begin}-${end}节`),
+    );
+    bindCourseDrag(node, displayCourse, 'term');
+    body.append(node);
+  }
+  if (!list.length) {
+    body.replaceChildren(h('div', { class: 'empty', style: { gridColumn: '1 / -1', padding: '32px 12px' } },
+      h('b', {}, '总课表为空'), '请先导入课表。'));
+  }
+  renderLegend(list.map((c) => ({ course: c.courseName })));
+  renderUnscheduled();
+}
+
+function weeksToText(weeks) {
+  const sorted = [...new Set(weeks)].sort((a, b) => a - b);
+  if (!sorted.length) return '';
+  const out = [];
+  let start = sorted[0];
+  let prev = sorted[0];
+  for (let i = 1; i <= sorted.length; i++) {
+    const n = sorted[i];
+    if (n === prev + 1) { prev = n; continue; }
+    out.push(start === prev ? `${start}周` : `${start}-${prev}周`);
+    start = prev = n;
+  }
+  return out.join(',');
 }
 
 /**
@@ -388,7 +761,7 @@ function modalUnscheduled(list) {
   openModal(`未排课的 ${list.length} 门`, [
     h('p', { class: 'muted small' },
       '这些课已经选上了，但教务系统还没给出上课时间，所以进不了课表和提醒。' +
-      '等出时间后回「我的 → 同步课表」重新导入，它们就会自动出现在课表里。'),
+      '等出时间后回「设置 → 同步课表」重新导入，它们就会自动出现在课表里。'),
     ...rows,
   ], [{ label: '知道了' }]);
 }
@@ -414,6 +787,262 @@ function showCourseDetail(e) {
   ], []);
 }
 
+function showCourseEditor(item, scope) {
+  const isTerm = scope === 'term';
+  const name = isTerm ? item.courseName : item.course;
+  const location = isTerm ? item.placeName : item.location;
+  const teacher = isTerm ? teacherOf(item) : item.teacher;
+  const begin = Number(isTerm ? item.beginSection : item.beginSection) || 1;
+  const end = Number(isTerm ? item.endSection : item.endSection) || begin;
+  const start = isTerm ? (item.beginTime || SECTION_TIMES[begin - 1]?.start || '') : item.start;
+  const finish = isTerm ? (item.endTime || SECTION_TIMES[end - 1]?.end || '') : item.end;
+  const field = (id, label, value, type = 'text') => h('label', { class: 'row' },
+    h('span', {}, label), h('input', { id, class: 'text-input', type, value: value ?? '' }));
+  const day = h('select', { id: 'editDay' },
+    ...WEEKDAY_NAMES.map((x, i) => h('option', { value: String(i + 1), selected: Number(item.dayOfWeek) === i + 1 ? true : null }, '周' + x)));
+  const beginSel = h('select', { id: 'editBegin' }, ...Array.from({ length: 13 }, (_, i) =>
+    h('option', { value: String(i + 1), selected: begin === i + 1 ? true : null }, `第 ${i + 1} 节`)));
+  const endSel = h('select', { id: 'editEnd' }, ...Array.from({ length: 13 }, (_, i) =>
+    h('option', { value: String(i + 1), selected: end === i + 1 ? true : null }, `第 ${i + 1} 节`)));
+  const syncTimesFromSections = () => {
+    const b = Number($('editBegin').value) || begin;
+    const e = Number($('editEnd').value) || end;
+    $('editStart').value = SECTION_TIMES[b - 1]?.start || '';
+    $('editEndTime').value = SECTION_TIMES[e - 1]?.end || '';
+  };
+  const body = [
+    h('p', { class: 'muted small' }, isTerm
+      ? '这是总课表修改，会影响这门课的全部周次。'
+      : `这是第 ${item.week} 周的周课表修改，只影响这一周。`),
+    field('editName', '课程名称', name),
+    h('label', { class: 'row' }, h('span', {}, '星期'), day),
+    h('label', { class: 'row' }, h('span', {}, '开始节次'), beginSel),
+    h('label', { class: 'row' }, h('span', {}, '结束节次'), endSel),
+    field('editStart', '上课时间', start),
+    field('editEndTime', '下课时间', finish),
+    field('editLocation', '上课地点', location),
+    field('editTeacher', '上课老师', teacher),
+  ];
+  beginSel.addEventListener('change', syncTimesFromSections);
+  endSel.addEventListener('change', syncTimesFromSections);
+  openModal('编辑课程', body, [
+    { label: '取消', class: 'ghost-btn' },
+    {
+      label: '保存修改', class: 'primary-btn',
+      onClick: () => {
+        // 以当前时间输入为最终依据。移动端点击保存前不一定会先派发 input/change，
+        // 因此不能只依赖节次下拉框的监听来触发课程位置更新。
+        const typedBeginTime = normTime($('editStart').value);
+        const typedEndTime = normTime($('editEndTime').value);
+        const selectedBegin = typedBeginTime
+          ? sectionForClock(typedBeginTime, Number($('editBegin').value) || begin)
+          : (Number($('editBegin').value) || begin);
+        const selectedEnd = typedEndTime
+          ? sectionForClock(typedEndTime, Number($('editEnd').value) || end)
+          : (Number($('editEnd').value) || end);
+        const beginTime = typedBeginTime || SECTION_TIMES[selectedBegin - 1]?.start || '';
+        const endTime = typedEndTime || SECTION_TIMES[selectedEnd - 1]?.end || '';
+        const fields = {
+          courseName: $('editName').value.trim() || name,
+          dayOfWeek: Number($('editDay').value) || item.dayOfWeek,
+          beginSection: selectedBegin,
+          endSection: selectedEnd,
+          beginTime,
+          endTime,
+          placeName: $('editLocation').value.trim(),
+          teacher: $('editTeacher').value.trim(),
+        };
+        if (fields.endSection < fields.beginSection) {
+          toast('结束节次不能早于开始节次');
+          return false;
+        }
+        if (isTerm) {
+          upsertChange({
+            scope: 'term',
+            courseId: item.__courseId || courseIdentity(item, state.scheduleBase.termCode),
+            fields,
+          });
+        } else {
+          const date = state.schedule.termWeeks.find((w) => w.serialNumber === item.week)?.startDate;
+          const next = {
+            course: fields.courseName,
+            dayOfWeek: fields.dayOfWeek,
+            beginSection: fields.beginSection,
+            endSection: fields.endSection,
+            start: fields.beginTime,
+            end: fields.endTime,
+            location: fields.placeName,
+            teacher: fields.teacher,
+          };
+          if (date) next.date = addDays(date, fields.dayOfWeek - 1);
+          upsertChange({ scope: 'week', week: item.week, eventId: item.uid, courseId: item.courseId, fields: next });
+        }
+        rebuildSchedule();
+        saveState();
+        renderAll();
+        toast('课表修改已保存，上课提醒已同步');
+        return true;
+      },
+    },
+  ]);
+  $('editStart').addEventListener('change', () => {
+    beginSel.value = String(sectionForClock($('editStart').value, Number(beginSel.value) || begin));
+  });
+  $('editEndTime').addEventListener('change', () => {
+    endSel.value = String(sectionForClock($('editEndTime').value, Number(endSel.value) || end));
+  });
+}
+
+let scheduleDragLock = false;
+
+function setScheduleDragLock(locked) {
+  scheduleDragLock = locked;
+  document.documentElement.classList.toggle('schedule-drag-lock', locked);
+}
+
+function bindCourseDrag(node, item, scope) {
+  let timer = 0;
+  let pointerId = null;
+  let startX = 0;
+  let startY = 0;
+  let moved = false;
+  let dragging = false;
+  const span = sectionSpan(item);
+  const body = $('gridBody');
+  const rowStart = Number(body?.dataset.rowStart) || 1;
+  const originalGridColumn = node.style.gridColumn;
+  const originalGridRow = node.style.gridRow;
+
+  const clearTimer = () => {
+    if (timer) clearTimeout(timer);
+    timer = 0;
+  };
+  const resetPointer = () => {
+    clearTimer();
+    pointerId = null;
+    moved = false;
+  };
+  const preview = (day, section) => {
+    const maxStart = Math.max(1, 13 - span.duration + 1);
+    const beginSection = Math.min(Math.max(1, section), maxStart);
+    const endSection = beginSection + span.duration - 1;
+    node.dataset.targetDay = String(day);
+    node.dataset.targetSection = String(beginSection);
+    node.style.gridColumn = String(day + 1);
+    node.style.gridRow = `${beginSection - rowStart + 1} / ${endSection - rowStart + 2}`;
+  };
+  const restorePreview = () => {
+    node.style.gridColumn = originalGridColumn;
+    node.style.gridRow = originalGridRow;
+    delete node.dataset.targetDay;
+    delete node.dataset.targetSection;
+  };
+  const finishDrag = (cancelled = false) => {
+    clearTimer();
+    if (!dragging) {
+      const suppress = moved;
+      resetPointer();
+      if (suppress) setTimeout(() => { node._suppressClick = false; }, 0);
+      return;
+    }
+    dragging = false;
+    setScheduleDragLock(false);
+    node.classList.remove('dragging');
+    node.style.pointerEvents = '';
+    node._suppressClick = true;
+    const day = Number(node.dataset.targetDay);
+    const section = Number(node.dataset.targetSection);
+    const changed = !cancelled && day && section &&
+      (day !== Number(item.dayOfWeek) || section !== span.begin);
+    if (changed) {
+      const endSection = section + span.duration - 1;
+      if (scope === 'term') {
+        upsertChange({
+          scope: 'term',
+          courseId: item.__courseId || courseIdentity(item, state.scheduleBase.termCode),
+          fields: {
+            dayOfWeek: day,
+            beginSection: section,
+            endSection,
+            beginTime: SECTION_TIMES[section - 1]?.start || '',
+            endTime: SECTION_TIMES[endSection - 1]?.end || '',
+          },
+        });
+      } else {
+        const w = state.schedule.termWeeks.find((x) => x.serialNumber === item.week);
+        const next = {
+          dayOfWeek: day,
+          beginSection: section,
+          endSection,
+          start: SECTION_TIMES[section - 1]?.start || '',
+          end: SECTION_TIMES[endSection - 1]?.end || '',
+        };
+        if (w) next.date = addDays(w.startDate, day - 1);
+        upsertChange({ scope: 'week', week: item.week, eventId: item.uid, courseId: item.courseId, fields: next });
+      }
+      rebuildSchedule();
+      saveState();
+      renderAll();
+      toast('课表节次已调整，上课提醒已同步');
+    } else {
+      restorePreview();
+    }
+    resetPointer();
+    setTimeout(() => {
+      node._dragged = false;
+      node._suppressClick = false;
+    }, 0);
+  };
+  node.addEventListener('pointerdown', (ev) => {
+    if (ev.button !== 0) return;
+    pointerId = ev.pointerId;
+    startX = ev.clientX;
+    startY = ev.clientY;
+    moved = false;
+    node._suppressClick = false;
+    clearTimer();
+    timer = setTimeout(() => {
+      if (pointerId !== ev.pointerId || moved) return;
+      dragging = true;
+      node._dragged = true;
+      node._suppressClick = true;
+      node.classList.add('dragging');
+      setScheduleDragLock(true);
+      node.setPointerCapture?.(ev.pointerId);
+      toast('拖动到目标节次后松开');
+    }, 450);
+  });
+  node.addEventListener('pointermove', (ev) => {
+    if (pointerId !== ev.pointerId) return;
+    const distance = Math.hypot(ev.clientX - startX, ev.clientY - startY);
+    if (!dragging && distance > 8) {
+      moved = true;
+      clearTimer();
+      node._suppressClick = true;
+      return;
+    }
+    if (!dragging) return;
+    ev.preventDefault();
+    // 课程块覆盖在背景格上，临时让出命中测试，才能拖到已有课程所在的格子。
+    node.style.pointerEvents = 'none';
+    const target = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.gd-cell');
+    node.style.pointerEvents = '';
+    if (!target) return;
+    preview(Number(target.dataset.day), Number(target.dataset.section));
+  });
+  node.addEventListener('pointerup', (ev) => {
+    if (pointerId !== ev.pointerId) return;
+    finishDrag(false);
+  });
+  node.addEventListener('pointercancel', (ev) => {
+    if (pointerId !== ev.pointerId) return;
+    finishDrag(true);
+  });
+  node.addEventListener('lostpointercapture', () => {
+    if (dragging) finishDrag(false);
+  });
+}
+
 // ================================================================ 逐日
 
 function renderDay() {
@@ -422,7 +1051,7 @@ function renderDay() {
   box.replaceChildren();
 
   if (!state.schedule) {
-    box.append(h('div', { class: 'empty' }, h('b', {}, '还没有课表'), '先在「我的 → 导入课表」里导入。'));
+    box.append(h('div', { class: 'empty' }, h('b', {}, '还没有课表'), '先在「设置 → 导入课表」里导入。'));
     return;
   }
 
@@ -441,7 +1070,7 @@ function renderDay() {
 
   for (const e of list) {
     box.append(
-      h('div', { class: 'dayitem ' + colorOf(e.course), onclick: () => showCourseDetail(e) },
+      h('div', { class: 'dayitem ' + colorOf(e.course), onclick: () => showCourseEditor(e, 'week') },
         h('div', { class: 'dt' }, h('b', {}, e.start), e.end.slice(0, 5)),
         h('div', { class: 'di' },
           h('b', {}, e.course),
@@ -475,10 +1104,12 @@ function renderTodos() {
       else { cdText = `还剩 ${cd.minutes} 分钟`; cdClass = 'soon'; }
     }
 
-    box.append(
-      h('div', { class: `todo-item k-${td.kind}${td.done ? ' done' : ''}` },
+    const item = h('div', { class: `todo-item k-${td.kind}${td.done ? ' done' : ''}` },
         h('div', { class: 'tk' }),
-        h('div', { class: 'ti', onclick: () => { state.todos = toggleTodo(state.todos, td.id); saveState(); renderTodos(); updateBadges(); } },
+        h('div', { class: 'ti', onclick: () => {
+          if (item._suppressTodoClick) { item._suppressTodoClick = false; return; }
+          state.todos = toggleTodo(state.todos, td.id); saveState(); renderTodos(); updateBadges();
+        } },
           h('b', {}, td.title),
           h('p', {}, [TODO_KINDS[td.kind]?.label, td.due ? td.due.replace('T', ' ') : '无截止时间', td.note && td.note !== td.title ? '' : ''].filter(Boolean).join(' · ')),
         ),
@@ -487,9 +1118,103 @@ function renderTodos() {
           class: 'icon-btn', title: '删除',
           onclick: (ev) => { ev.stopPropagation(); state.todos = removeTodo(state.todos, td.id); saveState(); renderTodos(); updateBadges(); },
         }, '✕'),
-      ),
-    );
+      );
+    bindTodoLongPress(item, td);
+    box.append(item);
   }
+}
+
+let todoEditLock = false;
+
+function setTodoEditLock(locked) {
+  todoEditLock = locked;
+  document.documentElement.classList.toggle('schedule-drag-lock', locked);
+}
+
+function bindTodoLongPress(node, todo) {
+  let timer = 0;
+  let pointerId = null;
+  let moved = false;
+  let longPressed = false;
+  const clear = () => { if (timer) clearTimeout(timer); timer = 0; };
+  node.addEventListener('pointerdown', (ev) => {
+    if (ev.button !== 0) return;
+    pointerId = ev.pointerId;
+    node._todoX = ev.clientX;
+    node._todoY = ev.clientY;
+    moved = false;
+    longPressed = false;
+    clear();
+    timer = setTimeout(() => {
+      if (pointerId !== ev.pointerId || moved) return;
+      longPressed = true;
+      node._suppressTodoClick = true;
+      node.classList.add('long-pressing');
+      setTodoEditLock(true);
+      node.setPointerCapture?.(ev.pointerId);
+      modalEditTodo(todo);
+    }, 500);
+  });
+  node.addEventListener('pointermove', (ev) => {
+    if (pointerId !== ev.pointerId) return;
+    if (Math.hypot(ev.clientX - (node._todoX || ev.clientX), ev.clientY - (node._todoY || ev.clientY)) > 8) {
+      moved = true;
+      clear();
+    }
+    if (longPressed) ev.preventDefault();
+  });
+  node.addEventListener('pointerup', (ev) => {
+    if (pointerId !== ev.pointerId) return;
+    clear();
+    if (longPressed) {
+      ev.preventDefault();
+      node.classList.remove('long-pressing');
+      setTodoEditLock(false);
+      setTimeout(() => { node._suppressTodoClick = false; }, 0);
+    }
+    pointerId = null;
+  });
+  node.addEventListener('pointercancel', () => {
+    clear();
+    node.classList.remove('long-pressing');
+    setTodoEditLock(false);
+    pointerId = null;
+  });
+}
+
+function modalEditTodo(todo) {
+  openModal('修改待办', [
+    h('label', { class: 'row' }, h('span', {}, '内容'), h('input', { id: 'etTitle', class: 'text-input', value: todo.title })),
+    h('label', { class: 'row' }, h('span', {}, '类型'),
+      h('select', { id: 'etKind' }, ...Object.entries(TODO_KINDS).map(([k, v]) =>
+        h('option', { value: k, selected: todo.kind === k ? true : null }, v.label))),
+    ),
+    h('label', { class: 'row' }, h('span', {}, '截止'), h('input', { id: 'etDue', class: 'text-input', type: 'datetime-local', value: todo.due || '' })),
+    h('label', { class: 'row' }, h('span', {}, '备注'), h('input', { id: 'etNote', class: 'text-input', value: todo.note || '' })),
+  ], [
+    { label: '取消', class: 'ghost-btn' },
+    {
+      label: '保存', class: 'primary-btn',
+      onClick: () => {
+        const title = $('etTitle').value.trim();
+        if (!title) { toast('内容不能为空'); return false; }
+        state.todos = upsertTodo(state.todos, {
+          id: todo.id,
+          title,
+          kind: $('etKind').value,
+          due: $('etDue').value,
+          note: $('etNote').value.trim(),
+          done: todo.done,
+          createdAt: todo.createdAt,
+        });
+        saveState();
+        renderTodos();
+        updateBadges();
+        toast('待办已修改');
+        return true;
+      },
+    },
+  ]);
 }
 
 function modalAddTodo() {
@@ -566,7 +1291,7 @@ function renderAnnouncements() {
   if (!list.length) {
     box.append(h('div', { class: 'empty' }, h('b', {}, '暂时没有公告'),
       !state.settings.annUrl
-        ? '还没设置公告源。到「我的 → 公告源」粘贴班级里发的那串分享码。'
+        ? '还没设置公告源。到「设置 → 公告源」粘贴班级里发的那串分享码。'
         : '公告源没有返回内容，或者网络不通。'));
     return;
   }
@@ -587,6 +1312,512 @@ function renderAnnouncements() {
         h('div', { class: 'ab' }, h('div', { html: miniMarkdown(a.body) })),
       ),
     );
+  }
+}
+
+// ================================================================ 智能助手
+
+let assistantAttachment = null;
+
+function assistantInjectionPrompt() {
+  return [
+    '你是“仰山课表”的通知理解与行动助手。',
+    '你的任务是分析学生提供的通知截图、通知文档、长难通知、课程要求或 PPT，并用中文直接回答问题。',
+    '先提取明确事实，再给出结论；涉及日期、时间、地点、对象、截止时间、提交方式、格式要求时必须逐项核对。',
+    '把隐含的待办事项整理成清单；不确定的内容明确标注“无法从材料确认”，绝不能臆造。',
+    '如果材料存在多个时间或互相冲突的要求，指出冲突并说明需要向谁确认。',
+    '用户没有明确提问时，默认输出：摘要、关键时间、需要完成的事项、注意事项。',
+    '如发现适合加入待办的事项，必须在回答末尾追加机器可读区块：',
+    '[YS_TODOS]',
+    '[{"title":"事项名称","kind":"homework|online|exam|other","due":"YYYY-MM-DDTHH:MM","note":"备注"}]',
+    '[/YS_TODOS]；没有明确截止时间的事项不要放入该区块。',
+    '除非用户确认，否则软件不会自动加入待办。',
+  ].join('\n');
+}
+
+function renderAssistantStatus() {
+  const status = $('assistantStatus');
+  if (!status) return;
+  const configured = Boolean(state.settings.aiApiKey);
+  status.textContent = configured
+    ? `已配置 · ${state.settings.aiModel || 'deepseek-flash'}`
+    : '未配置 API';
+}
+
+function renderAiConfig() {
+  const s = state.settings;
+  const base = $('setAiBaseUrl');
+  const key = $('setAiApiKey');
+  const model = $('setAiModel');
+  const online = $('setAiOnline');
+  const reasoning = $('setAiReasoning');
+  if (!base) return;
+  base.value = s.aiBaseUrl || 'https://api.deepseek.com';
+  key.value = s.aiApiKey || '';
+  model.value = s.aiModel || 'deepseek-flash';
+  online.checked = Boolean(s.aiOnline);
+  reasoning.value = s.aiReasoning || 'medium';
+  renderAssistantStatus();
+}
+
+function newAssistantConversation() {
+  return {
+    id: `ai-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    title: '新对话',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    messages: [],
+  };
+}
+
+function ensureAssistantConversation() {
+  if (!state.assistantCurrent || !Array.isArray(state.assistantCurrent.messages)) {
+    state.assistantCurrent = newAssistantConversation();
+  }
+  return state.assistantCurrent;
+}
+
+function archiveAssistantConversation() {
+  const current = state.assistantCurrent;
+  if (!current?.messages?.length) return;
+  const history = state.assistantHistory.filter((x) => x.id !== current.id);
+  history.unshift({ ...current, updatedAt: new Date().toISOString() });
+  state.assistantHistory = history.slice(0, 50);
+  state.assistantCurrent = newAssistantConversation();
+  saveState();
+}
+
+function assistantTextPreview(messages) {
+  const last = [...(messages || [])].reverse().find((m) => m.role === 'assistant' || m.role === 'user');
+  return String(last?.content || '').replace(/\s+/g, ' ').slice(0, 100);
+}
+
+// 单个附件的持久化上限。必须明显小于 MAX_STATE_CHARS —— 否则一个附件就能把
+// 整个 localStorage 吃光，saveState() 会连带把待办和课表改动一起写失败。
+const MAX_PERSISTED_ASSISTANT_IMAGES = 6;
+const MAX_PERSISTED_ASSISTANT_IMAGE = 900_000;
+const MAX_PERSISTED_ASSISTANT_IMAGE_BYTES = 1_500_000;
+
+function attachmentImages(attachment) {
+  return [...new Set([
+    ...(Array.isArray(attachment?.images) ? attachment.images : []),
+    attachment?.image,
+  ].filter((image) => typeof image === 'string' && image.startsWith('data:image/')))]
+    .slice(0, MAX_PERSISTED_ASSISTANT_IMAGES);
+}
+
+function persistAssistantAttachment(attachment) {
+  if (!attachment) return null;
+  const all = attachmentImages(attachment);
+  let total = 0;
+  const images = all.filter((image) => {
+    if (image.length > MAX_PERSISTED_ASSISTANT_IMAGE) return false;
+    if (total + image.length > MAX_PERSISTED_ASSISTANT_IMAGE_BYTES) return false;
+    total += image.length;
+    return true;
+  });
+  // 存不下就明说，不能静默吞掉：后续追问时模型必须知道「少了几页图」，
+  // 否则它会以为自己看过全部页面，答得头头是道却是错的。
+  const missing = all.length - images.length;
+  return {
+    name: String(attachment.name || '通知文件'),
+    text: String(attachment.text || '').slice(0, 50_000),
+    // 图片通常是 base64 data URL。限制总大小，避免多页 PDF 撑爆 localStorage；
+    // 超限时仍保留文字上下文，继续对话时至少不会丢掉文件身份和已提取内容。
+    images,
+    image: images[0] || '',
+    note: missing > 0
+      ? `（本机存储空间有限，${all.length} 页图片里只留了前 ${images.length} 页；其余页的文字层见上面。）`
+      : '',
+  };
+}
+
+function assistantApiMessage(message) {
+  const role = message?.role === 'assistant' ? 'assistant' : 'user';
+  const attachment = message?.attachment;
+  if (role === 'user' && attachment) {
+    const text = [
+      String(message.content || ''),
+      attachment.text ? `历史附件内容：\n${String(attachment.text).slice(0, 50_000)}` : '',
+      // 图片被存储配额裁掉时的说明。不带上这句，模型会以为自己看全了所有页。
+      attachment.note ? String(attachment.note) : '',
+    ].filter(Boolean).join('\n\n').slice(0, 60_000);
+    const images = attachmentImages(attachment);
+    if (images.length) {
+      return {
+        role,
+        content: [
+          { type: 'text', text },
+          ...images.map((image) => ({ type: 'image_url', image_url: { url: image } })),
+        ],
+      };
+    }
+    return { role, content: text };
+  }
+  return { role, content: String(message?.content || '').slice(0, 12_000) };
+}
+
+function renderAssistantConversation() {
+  const box = $('assistantConversation');
+  if (!box) return;
+  const current = ensureAssistantConversation();
+  box.replaceChildren();
+  if (!current.messages.length) {
+    box.append(h('p', { class: 'muted small' }, '当前对话还没有消息。'));
+    return;
+  }
+  for (const message of current.messages) {
+    box.append(h('div', { class: `assistant-message ${message.role}` },
+      h('small', {}, message.role === 'user' ? '你' : '助手'),
+      h('div', { html: message.role === 'assistant' ? miniMarkdown(message.content) : '' }, message.role === 'assistant' ? null : message.content),
+    ));
+  }
+}
+
+function renderAssistantHistory() {
+  const box = $('assistantHistory');
+  if (!box) return;
+  box.replaceChildren();
+  if (!state.assistantHistory.length) {
+    box.append(h('p', { class: 'muted small' }, '暂无历史对话。退出软件或点击“保存到历史”后会归档。'));
+    return;
+  }
+  for (const chat of state.assistantHistory) {
+    box.append(h('div', { class: 'assistant-history-item' },
+      h('div', { class: 'assistant-history-main' },
+        h('b', {}, chat.title || '未命名对话'),
+        h('span', {}, assistantTextPreview(chat.messages)),
+      ),
+      h('button', {
+        class: 'ghost-btn',
+        title: '继续对话',
+        onclick: () => {
+          state.assistantCurrent = { ...chat, messages: Array.isArray(chat.messages) ? chat.messages.slice() : [] };
+          state.assistantHistory = state.assistantHistory.filter((x) => x.id !== chat.id);
+          saveState();
+          renderAssistantConversation();
+          renderAssistantHistory();
+          toast('已载入历史对话');
+        },
+      }, '继续'),
+      h('button', {
+        class: 'icon-btn',
+        title: '删除历史对话',
+        onclick: () => {
+          state.assistantHistory = state.assistantHistory.filter((x) => x.id !== chat.id);
+          saveState();
+          renderAssistantHistory();
+          toast('历史对话已删除');
+        },
+      }, '✕'),
+    ));
+  }
+}
+
+function renderAssistant() {
+  renderAssistantStatus();
+  renderAssistantConversation();
+  renderAssistantHistory();
+}
+
+function saveCurrentAssistantToHistory() {
+  const current = ensureAssistantConversation();
+  if (!current.messages.length) {
+    toast('当前对话还没有消息');
+    return;
+  }
+  const firstUser = current.messages.find((m) => m.role === 'user');
+  const title = String(firstUser?.content || '').replace(/\s+/g, ' ').slice(0, 28) || '未命名对话';
+  const archived = { ...current, title, updatedAt: new Date().toISOString() };
+  state.assistantHistory = [archived, ...state.assistantHistory.filter((x) => x.id !== archived.id)].slice(0, 50);
+  state.assistantCurrent = newAssistantConversation();
+  saveState();
+  renderAssistant();
+  toast('对话已保存到历史');
+}
+
+function parseAssistantTodos(answer) {
+  const match = String(answer || '').match(/\[YS_TODOS\]\s*([\s\S]*?)\s*\[\/YS_TODOS\]/i);
+  if (!match) return [];
+  try {
+    const parsed = JSON.parse(match[1]);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((x) => x && typeof x === 'object' && x.title && x.due)
+      .map((x) => ({
+        title: String(x.title).trim(),
+        kind: TODO_KINDS[x.kind] ? x.kind : 'other',
+        due: String(x.due).replace(' ', 'T').slice(0, 16),
+        note: String(x.note || '').trim(),
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function showAssistantTodoConfirm(todos) {
+  if (!todos.length) return;
+  openModal('加入待办', [
+    h('p', { class: 'muted small' }, '助手识别出以下带截止时间的事项，是否加入待办？'),
+    ...todos.map((todo) => h('div', { class: 'row' },
+      h('span', {}, `${TODO_KINDS[todo.kind]?.label || '其他'} · ${todo.title}`),
+      h('b', {}, todo.due.replace('T', ' ')),
+    )),
+  ], [
+    { label: '暂不加入', class: 'ghost-btn' },
+    {
+      label: '加入待办', class: 'primary-btn',
+      onClick: () => {
+        for (const todo of todos) state.todos = upsertTodo(state.todos, todo);
+        saveState();
+        updateBadges();
+        toast(`已加入 ${todos.length} 条待办`);
+        return true;
+      },
+    },
+  ]);
+}
+
+function fileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('读取图片失败'));
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.readAsDataURL(file);
+  });
+}
+
+function clearAssistantAttachment() {
+  assistantAttachment = null;
+  const name = $('assistantFileName');
+  const cancel = $('btnAssistantCancelFile');
+  if (name) {
+    name.hidden = true;
+    name.textContent = '';
+  }
+  if (cancel) cancel.hidden = true;
+}
+
+function xmlToNoticeText(xml) {
+  return String(xml || '')
+    .replace(/<w:tab\s*\/?>/gi, '\t')
+    .replace(/<w:br\s*\/?>/gi, '\n')
+    .replace(/<a:br\s*\/?>/gi, '\n')
+    .replace(/<\/(?:w:p|a:p)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+async function extractAssistantFile(file) {
+  const name = file.name || '通知文件';
+  const lower = name.toLowerCase();
+  if (file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp)$/i.test(lower)) {
+    return { name, text: `图片文件：${name}`, image: await fileAsDataUrl(file) };
+  }
+  if (/\.(txt|md|json|csv|log)$/i.test(lower) || file.type.startsWith('text/')) {
+    return { name, text: await file.text() };
+  }
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (lower.endsWith('.docx')) {
+    const entries = await readZipTextEntries(bytes, ['word/document.xml'], browserInflateRaw);
+    return { name, text: xmlToNoticeText(entries.get('word/document.xml')) };
+  }
+  if (lower.endsWith('.pptx')) {
+    const slides = listZipEntries(bytes)
+      .map((e) => e.name)
+      .filter((entry) => /^ppt\/slides\/slide\d+\.xml$/i.test(entry))
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    const entries = await readZipTextEntries(bytes, slides, browserInflateRaw);
+    const text = slides.map((entry, index) => `【第 ${index + 1} 页】\n${xmlToNoticeText(entries.get(entry))}`).join('\n\n');
+    return { name, text };
+  }
+  if (lower.endsWith('.pdf') || file.type === 'application/pdf') {
+    return extractAssistantPdf(file);
+  }
+  throw new Error('暂不支持此文件类型，请使用图片、PDF、TXT、MD、JSON、DOCX 或 PPTX。');
+}
+
+const PDF_ASSISTANT_PAGE_LIMIT = 6;
+const PDF_ASSISTANT_MAX_WIDTH = 1600;
+const PDF_ASSISTANT_MAX_HEIGHT = 2200;
+
+async function extractAssistantPdf(file) {
+  const pdfjs = globalThis.pdfjsLib;
+  if (!pdfjs?.getDocument) {
+    throw new Error('PDF 转图片引擎还没有加载完成，请稍后再试。');
+  }
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let pdf;
+  try {
+    pdf = await pdfjs.getDocument({
+      data: bytes,
+      disableWorker: true,
+      isEvalSupported: false,
+      useSystemFonts: true,
+    }).promise;
+    const totalPages = Number(pdf.numPages) || 0;
+    if (!totalPages) throw new Error('PDF 没有可读取的页面。');
+    const pageLimit = Math.min(totalPages, PDF_ASSISTANT_PAGE_LIMIT);
+    const images = [];
+    const textPages = [];
+    for (let pageNumber = 1; pageNumber <= pageLimit; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const baseViewport = page.getViewport({ scale: 1 });
+      const scale = Math.min(
+        2,
+        PDF_ASSISTANT_MAX_WIDTH / Math.max(1, baseViewport.width),
+        PDF_ASSISTANT_MAX_HEIGHT / Math.max(1, baseViewport.height),
+      );
+      const viewport = page.getViewport({ scale });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.ceil(viewport.width));
+      canvas.height = Math.max(1, Math.ceil(viewport.height));
+      const context = canvas.getContext('2d', { alpha: false });
+      if (!context) throw new Error('当前设备无法创建 PDF 图片画布。');
+      context.fillStyle = '#fff';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      await page.render({ canvasContext: context, viewport }).promise;
+      images.push(canvas.toDataURL('image/jpeg', 0.78));
+      try {
+        const content = await page.getTextContent();
+        const text = content.items
+          .map((item) => String(item?.str || ''))
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        if (text) textPages.push(`【第 ${pageNumber} 页】\n${text}`);
+      } catch {
+        // 扫描型 PDF 可能没有文字层，图片仍然可以交给视觉模型。
+      }
+      canvas.width = 1;
+      canvas.height = 1;
+    }
+    const omitted = totalPages > pageLimit ? `\n（文件共 ${totalPages} 页，已转换前 ${pageLimit} 页图片。）` : '';
+    return {
+      name: file.name || '通知.pdf',
+      text: `PDF 文件：${file.name || '通知.pdf'}，已在本机转换为 ${images.length} 页图片。${omitted}\n${textPages.join('\n\n')}`.trim(),
+      images,
+      image: images[0] || '',
+      pages: totalPages,
+    };
+  } finally {
+    try { await pdf?.destroy?.(); } catch { /* 释放失败不影响已生成的图片 */ }
+  }
+}
+
+async function fetchAssistantUrlContext(text) {
+  if (!state.settings.aiOnline) return '';
+  const urls = [...new Set(String(text || '').match(/https?:\/\/[^\s<>"')]+/g) || [])].slice(0, 3);
+  if (!urls.length) return '';
+  const parts = [];
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, { credentials: 'omit' });
+      if (!response.ok) continue;
+      const body = (await response.text()).replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      if (body) parts.push(`来源：${url}\n${body.slice(0, 6000)}`);
+    } catch {
+      // 跨域或站点拒绝访问时静默跳过，不能阻断助手回答。
+    }
+  }
+  return parts.join('\n\n');
+}
+
+async function askDeepSeek(question, attachment, conversation = []) {
+  const s = state.settings;
+  if (!s.aiApiKey) throw new Error('请先到“设置 → 智能助手 · DeepSeek”填写 API Key。');
+  const base = String(s.aiBaseUrl || 'https://api.deepseek.com').replace(/\/+$/, '');
+  const endpoint = /\/chat\/completions$/i.test(base) ? base : `${base}/chat/completions`;
+  const sourceText = attachment?.text || '';
+  const onlineContext = await fetchAssistantUrlContext(`${question}\n${sourceText}`);
+  const text = [
+    `用户问题：${question || '请分析这份材料。'}`,
+    sourceText ? `材料内容：\n${sourceText.slice(0, 50000)}` : '',
+    onlineContext ? `联网补充资料：\n${onlineContext}` : '',
+    s.aiOnline ? '联网增强：已开启。仅使用可验证的联网补充资料，不要把搜索不到的内容当成事实。' : '联网增强：关闭。只根据用户材料回答。',
+  ].filter(Boolean).join('\n\n');
+  const images = attachmentImages(attachment);
+  const textOnly = text;
+  const withImages = images.length
+    ? [{ type: 'text', text }, ...images.map((image) => ({ type: 'image_url', image_url: { url: image } }))]
+    : text;
+  const body = {
+    model: s.aiModel || 'deepseek-flash',
+    messages: [
+      { role: 'system', content: assistantInjectionPrompt() },
+      ...conversation.slice(-12).map(assistantApiMessage),
+    ],
+    temperature: 0.2,
+    stream: false,
+  };
+  if (s.aiReasoning && s.aiReasoning !== 'off') body.reasoning_effort = s.aiReasoning;
+
+  const sendOnce = async (content) => {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${s.aiApiKey}` },
+      body: JSON.stringify({ ...body, messages: [...body.messages, { role: 'user', content }] }),
+    });
+    return { ok: response.ok, status: response.status, raw: await response.text() };
+  };
+
+  let result = await sendOnce(withImages);
+  // 不是所有模型都吃 image_url。DeepSeek 的接口只收文字 —— 直接带图会 400，
+  // 于是「附了 PDF 反而问不了」比不附还糟。失败时退回纯文字再试一次：
+  // PDF 的文字层本来就在 text 里，丢掉图片仍然能回答大部分问题。
+  if (!result.ok && images.length && (result.status === 400 || result.status === 422)) {
+    const retry = await sendOnce(textOnly);
+    if (retry.ok) {
+      result = retry;
+      toast('当前模型不接受图片输入，这次只发了材料的文字部分。', 7000);
+    }
+  }
+
+  let data;
+  try { data = JSON.parse(result.raw); } catch { throw new Error(`接口返回了非 JSON：${result.raw.slice(0, 160)}`); }
+  if (!result.ok) throw new Error(data?.error?.message || `接口请求失败（${result.status}）`);
+  const answer = data?.choices?.[0]?.message?.content;
+  if (!answer) throw new Error('接口没有返回回答。');
+  return Array.isArray(answer) ? answer.map((x) => x?.text || '').join('') : String(answer);
+}
+
+async function runAssistant() {
+  const question = $('assistantQuestion').value.trim();
+  const current = ensureAssistantConversation();
+  const attachment = assistantAttachment;
+  const button = $('btnAssistantAsk');
+  const card = $('assistantAnswerCard');
+  const answer = $('assistantAnswer');
+  card.hidden = false;
+  answer.textContent = '正在分析材料…';
+  button.disabled = true;
+  $('assistantQuestion').value = '';
+  try {
+    const result = await askDeepSeek(question, attachment, current.messages);
+    const todos = parseAssistantTodos(result);
+    const userMessage = {
+      role: 'user',
+      content: question || (attachment?.name ? `请分析附件：${attachment.name}` : '请分析这份材料。'),
+    };
+    const persistedAttachment = persistAssistantAttachment(attachment);
+    if (persistedAttachment) userMessage.attachment = persistedAttachment;
+    current.messages.push(userMessage);
+    current.messages.push({ role: 'assistant', content: result });
+    current.title = current.title === '新对话'
+      ? String(question || attachment?.name || '通知分析').replace(/\s+/g, ' ').slice(0, 28)
+      : current.title;
+    current.updatedAt = new Date().toISOString();
+    saveState();
+    answer.innerHTML = miniMarkdown(result);
+    renderAssistantConversation();
+    renderAssistantHistory();
+    if (todos.length) showAssistantTodoConfirm(todos);
+  } catch (e) {
+    answer.textContent = `分析失败：${e?.message || e}`;
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -652,23 +1883,40 @@ async function refreshAnnouncements(quiet = false) {
   }
 }
 
+/**
+ * Android WebView 通常没有 Notification API，因此原生壳必须优先接管通知。
+ * 普通浏览器仍退回标准 Notification API。
+ */
+function sendSystemNotification(title, body, tag = '') {
+  const shell = globalThis.YangShanShell;
+  if (shell && typeof shell.notify === 'function') {
+    shell.notify(title, body);
+    return true;
+  }
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return false;
+  try {
+    return new Notification(title, { body, tag });
+  } catch (e) {
+    console.warn('系统通知失败', e);
+    return false;
+  }
+}
+
 /** 新公告 → 系统通知。没给权限就静默跳过，角标照常更新。 */
 function notifyNewAnnouncements(fresh) {
   if (!state.settings.annNotify) return;
-  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
   for (const a of fresh.slice(0, 3)) {
-    try {
-      const n = new Notification(a.title, {
-        body: String(a.body || '').replace(/[*#>`_\-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120),
-        tag: 'ys-ann-' + a.id,
-      });
+    const n = sendSystemNotification(
+      a.title,
+      String(a.body || '').replace(/[*#>`_\-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120),
+      'ys-ann-' + a.id,
+    );
+    if (n && typeof n === 'object') {
       n.onclick = () => {
         window.focus();
         if (ui.view !== 'ann') switchView('ann');
         modalAnnouncement(a);
       };
-    } catch (e) {
-      console.warn('系统通知失败', e);
     }
   }
 }
@@ -871,8 +2119,60 @@ function updateBadges() {
 //   ④ 粘贴抓取结果   iOS / 鸿蒙 上用书签小工具抓完粘回来的那条路。
 
 /** 把一份课表数据包落进 state 并刷新界面。返回给调用方一个可展示的摘要。 */
-function applyPack(pack) {
-  state.schedule = pack;
+function applyPack(pack, opts = {}) {
+  const incoming = ensureEditableEntryIds(normalizeSchedulePack(pack));
+  if (state.scheduleChanges.length && state.scheduleBase) {
+    const changes = state.scheduleChanges.slice();
+    if (opts.preserveChanges) {
+      state.scheduleBase = incoming;
+      state.scheduleChanges = changes;
+      rebuildSchedule();
+      ui.week = currentWeekNumber();
+      saveState();
+      renderAll();
+      return {
+        events: incoming.events?.length ?? 0,
+        weeks: incoming.termWeeks.length,
+        pending: false,
+        preserved: true,
+      };
+    }
+    openModal('课表有本地修改', [
+      h('p', {}, `教务系统返回了新课表，但本机还有 ${changes.length} 条修改记录。`),
+      h('p', { class: 'muted small' }, '保留修改会把记录套用到新课表；不保留会删除记录并采用教务系统课表。'),
+    ], [
+      {
+        label: '不保留，采用新课表', class: 'ghost-btn',
+        onClick: () => {
+          state.scheduleBase = incoming;
+          state.scheduleChanges = [];
+          state.schedule = incoming;
+          ui.week = currentWeekNumber();
+          saveState();
+          renderAll();
+          toast('已采用教务系统新课表');
+          return true;
+        },
+      },
+      {
+        label: '保留本地修改', class: 'primary-btn',
+        onClick: () => {
+          state.scheduleBase = incoming;
+          state.scheduleChanges = changes;
+          rebuildSchedule();
+          ui.week = currentWeekNumber();
+          saveState();
+          renderAll();
+          toast('已保留本地课表修改');
+          return true;
+        },
+      },
+    ]);
+    return { events: incoming.events?.length ?? 0, weeks: incoming.termWeeks.length, pending: true };
+  }
+  state.scheduleBase = incoming;
+  state.scheduleChanges = [];
+  state.schedule = incoming;
   ui.week = currentWeekNumber();
   saveState();
   renderHeader();
@@ -883,7 +2183,7 @@ function applyPack(pack) {
 
 function importFromText(text) {
   const r = applyPack(parseAnyScheduleInput(text));
-  toast(`导入成功：${r.events} 节课，${r.weeks} 教学周`);
+  if (!r.pending) toast(`导入成功：${r.events} 节课，${r.weeks} 教学周`);
 }
 
 /** 网格课表 → 落库。上传文件、粘贴表格、手动照抄、编辑课表四条路共用这一个出口。 */
@@ -893,7 +2193,7 @@ function importFromGrid(grid, anchorWeek, opts = {}) {
   );
   const r = applyPack(pack);
   const extra = pack.unscheduled?.length ? `，另有 ${pack.unscheduled.length} 门没排上课表` : '';
-  toast(`导入成功：${r.events} 节课${extra}`);
+  if (!r.pending) toast(`导入成功：${r.events} 节课${extra}`);
   return r;
 }
 
@@ -911,6 +2211,24 @@ function gridSummary(grid, anchorWeek) {
 }
 
 // ---------------------------------------------------------------- ① 登录教务系统
+
+function hasNativeShell() {
+  const shell = globalThis.YangShanShell;
+  return Boolean(shell && (
+    typeof shell.login === 'function' ||
+    typeof shell.refresh === 'function'
+  ));
+}
+
+function configureBrowserOnlyMode() {
+  const sync = $('btnSync');
+  if (!sync) return;
+  // 纯网页版没有教务系统直连能力，也不提供“自动更新课表”入口。
+  // Windows / Android 壳注入 YangShanShell 后仍保留手动刷新按钮。
+  const native = hasNativeShell();
+  sync.hidden = !native;
+  sync.setAttribute('aria-hidden', String(!native));
+}
 
 function modalImportAccount() {
   const shell = globalThis.YangShanShell;
@@ -1439,12 +2757,21 @@ function modalImport() {
       h('b', {}, emoji + '  ' + title),
       h('span', {}, desc));
 
+  const options = [];
+  if (hasNativeShell()) {
+    options.push(
+      opt('🔑', '登录教务系统', '一键抓取。由电脑 / 安卓客户端直连学校教务系统。', modalImportAccount),
+    );
+  }
+  options.push(
+    opt('📄', '上传课表文件', '教务系统「导出」的 .xlsx / .docx。数据最准，只需补一次「今天第几周」。', modalImportFile),
+    opt('📷', '课表截图', '自动识别后铺进格子，核对并修改后即可保存。', modalImportShot),
+    opt('📌', '粘贴抓取结果 / 分享码', '手机书签小工具抓完粘回来；也可以粘同学发来的分享码。', () => modalImportPaste()),
+  );
+
   openModal('导入课表', [
     h('p', { class: 'muted small' }, '选一种。数据只写进这台设备，不上传任何服务器。'),
-    opt('🔑', '登录教务系统', '一键抓取。需要装电脑 / 安卓客户端；浏览器里做不到，点进去会说明原因。', modalImportAccount),
-    opt('📄', '上传课表文件', '教务系统「导出」的 .xlsx / .docx。四端都能用，数据最准，只需补一次「今天第几周」。', modalImportFile),
-    opt('📷', '课表截图', '全自动识别，不用你先手动提取文字。认完直接铺进格子让你核对改错字，图不出这台设备。', modalImportShot),
-    opt('📌', '粘贴抓取结果 / 分享码', '手机书签小工具抓完粘回来；也可以粘同学发来的分享码。', () => modalImportPaste()),
+    ...options,
   ], [
     { label: '关闭', class: 'ghost-btn' },
   ]);
@@ -1552,7 +2879,7 @@ function modalShareCode() {
 
 /**
  * 公告源格式示例 —— 「共享通知」的落地载体：把这份 JSON 放到任意静态托管上，
- * 把地址发给全班，大家在「我的 → 公告源」填同一个地址，看到的就是同一批通知。
+ * 把地址发给全班，大家在「设置 → 公告源」填同一个地址，看到的就是同一批通知。
  *
  * 内容不在这里写死：构建时把仓库根目录的 `examples/announcements.json` 注入到
  * `<script type="application/json" id="ann-example">`（见 web/build.mjs）。
@@ -1776,10 +3103,21 @@ function modalRestoreBackup() {
     if (!f) return;
     try {
       const b = parseBackup(await f.text());
-      if (b.schedule) state.schedule = normalizeSchedulePack(b.schedule);
+      if (b.scheduleBase) state.scheduleBase = ensureEditableEntryIds(normalizeSchedulePack(b.scheduleBase));
+      else if (b.schedule) state.scheduleBase = ensureEditableEntryIds(normalizeSchedulePack(b.schedule));
+      state.scheduleChanges = b.scheduleChanges || [];
+      if (state.scheduleBase) rebuildSchedule();
       state.todos = b.todos;
       state.readAnnouncements = b.readAnnouncements;
-      state.settings = { ...DEFAULT_SETTINGS, ...b.settings };
+      state.settings = {
+        ...DEFAULT_SETTINGS,
+        ...b.settings,
+        // 备份里刻意不含 API Key（见 core/model.mjs 的 settingsForBackup），
+        // 所以这里保留本机原来那把，别让人恢复一次备份就把 Key 弄丢。
+        aiApiKey: state.settings.aiApiKey || '',
+      };
+      state.assistantCurrent = b.assistantCurrent ?? null;
+      state.assistantHistory = b.assistantHistory ?? [];
       saveState();
       applySettings();
       renderAll();
@@ -1815,11 +3153,7 @@ function checkReminders() {
   const fire = (key, title, body) => {
     if (firedKeys.has(key)) return;
     firedKeys.add(key);
-    try {
-      new Notification(title, { body, tag: key });
-    } catch (err) {
-      console.warn('通知失败', err);
-    }
+    sendSystemNotification(title, body, key);
   };
 
   // 上课提醒
@@ -1863,7 +3197,16 @@ function bindSettings() {
   $('setAlarm').addEventListener('change', (e) => { st().alarm = Number(e.target.value); saveState(); checkReminders(); });
   $('setTodoAlarm').addEventListener('change', (e) => { st().todoAlarm = Number(e.target.value); saveState(); checkReminders(); });
   $('setInApp').addEventListener('change', async (e) => {
-    if (e.target.checked && typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
+    const shell = globalThis.YangShanShell;
+    if (e.target.checked && shell && typeof shell.requestNotifications === 'function') {
+      try {
+        await shell.requestNotifications();
+      } catch {
+        e.target.checked = false;
+        toast('请在系统设置中允许仰山课表通知');
+        return;
+      }
+    } else if (e.target.checked && typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
       const p = await Notification.requestPermission();
       if (p !== 'granted') { e.target.checked = false; toast('浏览器拒绝了通知权限'); return; }
     }
@@ -1873,6 +3216,48 @@ function bindSettings() {
   $('setTheme').addEventListener('change', (e) => { st().theme = e.target.value; saveState(); applySettings(); });
   $('setFont').addEventListener('input', (e) => { st().font = Number(e.target.value); saveState(); applySettings(); });
   $('setHideWeekend').addEventListener('change', (e) => { st().hideWeekend = e.target.checked; saveState(); renderWeek(); });
+  $('btnSaveAi').addEventListener('click', () => {
+    const base = $('setAiBaseUrl').value.trim().replace(/\/+$/, '');
+    const model = $('setAiModel').value.trim() || 'deepseek-flash';
+    if (!/^https?:\/\//i.test(base)) {
+      toast('API 地址必须以 http:// 或 https:// 开头');
+      return;
+    }
+    // 请求会把 `Authorization: Bearer <API Key>` 原样发出去。http:// 就是明文 ——
+    // 同一条 Wi-Fi 上的人、运营商、代理都能直接读到 Key。只放行本机地址例外。
+    if (/^http:\/\//i.test(base) && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/i.test(base)) {
+      toast('只能用 https:// 地址。http:// 会把 API Key 明文发出去（本机 localhost 除外）。', 6000);
+      return;
+    }
+    st().aiBaseUrl = base;
+    st().aiApiKey = $('setAiApiKey').value.trim();
+    st().aiModel = model;
+    st().aiOnline = $('setAiOnline').checked;
+    st().aiReasoning = $('setAiReasoning').value;
+    saveState();
+    renderAiConfig();
+    $('aiConfigStatus').textContent = st().aiApiKey ? '已保存到本机。' : '已保存，但还没有填写 API Key。';
+    toast('智能助手设置已保存');
+  });
+  $('btnClearScheduleChanges').addEventListener('click', () => {
+    if (!state.scheduleChanges.length) { toast('没有课表修改记录'); return; }
+    openModal('删除课表修改记录', [
+      h('p', {}, `确定删除全部 ${state.scheduleChanges.length} 条记录吗？删除后课表会恢复为教务系统版本。`),
+    ], [
+      { label: '取消', class: 'ghost-btn' },
+      {
+        label: '删除全部', class: 'danger-btn',
+        onClick: () => {
+          state.scheduleChanges = [];
+          rebuildSchedule();
+          saveState();
+          renderAll();
+          toast('课表已恢复为教务系统版本');
+          return true;
+        },
+      },
+    ]);
+  });
   $('btnSaveAnnUrl').addEventListener('click', () => {
     const raw = $('setAnnUrl').value.trim();
     let parsed;
@@ -1893,7 +3278,16 @@ function bindSettings() {
   $('btnAnnExample').addEventListener('click', modalAnnExample);
 
   $('setAnnNotify').addEventListener('change', async (e) => {
-    if (e.target.checked && typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
+    const shell = globalThis.YangShanShell;
+    if (e.target.checked && shell && typeof shell.requestNotifications === 'function') {
+      try {
+        await shell.requestNotifications();
+      } catch {
+        e.target.checked = false;
+        toast('请在系统设置中允许仰山课表通知');
+        return;
+      }
+    } else if (e.target.checked && typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
       const p = await Notification.requestPermission();
       if (p !== 'granted') { e.target.checked = false; toast('浏览器拒绝了通知权限'); return; }
     }
@@ -1901,13 +3295,23 @@ function bindSettings() {
     saveState();
   });
   $('btnTestAnnPush').addEventListener('click', () => {
+    const shell = globalThis.YangShanShell;
+    if (shell && typeof shell.notify === 'function') {
+      const ask = typeof shell.requestNotifications === 'function'
+        ? shell.requestNotifications()
+        : Promise.resolve();
+      ask.then(() => {
+        shell.notify('仰山课表 · 测试通知', '看到这条说明安卓系统通知是通的。');
+        toast('已发出');
+      }).catch(() => toast('请在系统设置中允许仰山课表通知'));
+      return;
+    }
     if (typeof Notification === 'undefined') { toast('这个浏览器不支持系统通知'); return; }
     if (Notification.permission !== 'granted') { toast('先打开上面的「弹系统通知」并允许权限'); return; }
-    try {
-      new Notification('仰山课表 · 测试通知', { body: '看到这条说明通知是通的。' });
+    if (sendSystemNotification('仰山课表 · 测试通知', '看到这条说明通知是通的。')) {
       toast('已发出');
-    } catch (e) {
-      toast('发送失败：' + e.message);
+    } else {
+      toast('发送失败，请检查系统通知权限');
     }
   });
 
@@ -1937,7 +3341,12 @@ function bindSettings() {
       {
         label: '确认清除', class: 'danger-btn',
         onClick: () => {
-          state = { schedule: null, todos: [], readAnnouncements: [], announcements: [], localAnnouncements: [], announcementsFetchedAt: '', settings: { ...DEFAULT_SETTINGS } };
+          state = {
+            schedule: null, scheduleBase: null, scheduleChanges: [],
+            todos: [], readAnnouncements: [], announcements: [], localAnnouncements: [],
+            announcementsFetchedAt: '', settings: { ...DEFAULT_SETTINGS },
+            assistantCurrent: null, assistantHistory: [],
+          };
           saveState();
           renderAll();
           applySettings();
@@ -1957,10 +3366,44 @@ function bindSettings() {
   $('setTheme').value = st().theme;
   $('setFont').value = String(st().font);
   $('setHideWeekend').checked = st().hideWeekend;
+  renderScheduleChanges();
   $('setAnnUrl').value = st().annUrl ?? '';
   $('setAnnNotify').checked = Boolean(st().annNotify);
+  renderAiConfig();
   renderAnnSrcStatus();
   renderLocalCount();
+}
+
+function renderScheduleChanges() {
+  const box = $('scheduleChanges');
+  if (!box) return;
+  box.replaceChildren();
+  if (!state.scheduleChanges.length) {
+    box.append(h('p', { class: 'muted small' }, '暂无本地修改记录。'));
+    return;
+  }
+  state.scheduleChanges.forEach((change, index) => {
+    const fields = change.fields || {};
+    const courseName = fields.courseName || fields.course || '';
+    const placeName = fields.placeName || fields.location || '';
+    const beginTime = fields.beginTime || fields.start || '';
+    const endTime = fields.endTime || fields.end || '';
+    const detail = [
+      courseName ? `课程：${courseName}` : '',
+      fields.dayOfWeek ? `周${WEEKDAY_NAMES[Number(fields.dayOfWeek) - 1] || fields.dayOfWeek}` : '',
+      fields.beginSection ? `第${fields.beginSection}-${fields.endSection || fields.beginSection}节` : '',
+      beginTime || endTime ? `时间：${beginTime || '--'}-${endTime || '--'}` : '',
+      placeName ? `地点：${placeName}` : '',
+      fields.teacher ? `老师：${fields.teacher}` : '',
+    ].filter(Boolean).join(' · ');
+    box.append(h('div', { class: 'change-item' },
+      h('div', { class: 'change-item-main' },
+        h('b', {}, changeLabel(change)),
+        h('span', {}, detail || '已调整课程时间或其他信息'),
+      ),
+      h('button', { class: 'icon-btn', title: '删除这条记录', onclick: () => removeChange(index) }, '✕'),
+    ));
+  });
 }
 
 // ================================================================ 周次选择
@@ -2040,6 +3483,8 @@ function renderAll() {
   if (ui.view === 'day') renderDay();
   if (ui.view === 'todo') renderTodos();
   if (ui.view === 'ann') renderAnnouncements();
+  if (ui.view === 'assistant') renderAssistant();
+  renderScheduleChanges();
   updateBadges();
   $('aboutBox').textContent =
     `仰山课表 v${VERSION} · 北京信息科技大学 · 零服务器 · 课表仅存本机。` +
@@ -2094,6 +3539,9 @@ function demoPack() {
 // ================================================================ 启动
 
 function bindEvents() {
+  document.addEventListener('touchmove', (e) => {
+    if (scheduleDragLock || todoEditLock) e.preventDefault();
+  }, { passive: false, capture: true });
   for (const b of document.querySelectorAll('.tab')) {
     b.addEventListener('click', () => switchView(b.dataset.view));
   }
@@ -2102,6 +3550,24 @@ function bindEvents() {
   $('weekNext').addEventListener('click', () => { ui.week = (ui.week ?? 1) + 1; renderWeek(); });
   $('weekToday').addEventListener('click', () => { ui.week = currentWeekNumber(); renderWeek(); });
   $('weekLabel').addEventListener('click', modalPickWeek);
+  $('modeWeek').addEventListener('click', () => {
+    ui.scheduleMode = 'week';
+    $('modeWeek').classList.add('active');
+    $('modeTotal').classList.remove('active');
+    $('modeWeek').setAttribute('aria-selected', 'true');
+    $('modeTotal').setAttribute('aria-selected', 'false');
+    $('weekbar').hidden = false;
+    renderWeek();
+  });
+  $('modeTotal').addEventListener('click', () => {
+    ui.scheduleMode = 'total';
+    $('modeTotal').classList.add('active');
+    $('modeWeek').classList.remove('active');
+    $('modeTotal').setAttribute('aria-selected', 'true');
+    $('modeWeek').setAttribute('aria-selected', 'false');
+    $('weekbar').hidden = true;
+    renderWeek();
+  });
 
   $('dayPrev').addEventListener('click', () => { ui.day = addDays(ui.day, -1); renderDay(); });
   $('dayNext').addEventListener('click', () => { ui.day = addDays(ui.day, 1); renderDay(); });
@@ -2110,7 +3576,9 @@ function bindEvents() {
   $('btnImport').addEventListener('click', modalImport);
   $('onboardImport').addEventListener('click', () => { $('onboard').classList.remove('open'); modalImport(); });
   $('onboardDemo').addEventListener('click', () => {
-    state.schedule = normalizeSchedulePack(demoPack());
+    state.scheduleBase = ensureEditableEntryIds(normalizeSchedulePack(demoPack()));
+    state.scheduleChanges = [];
+    state.schedule = state.scheduleBase;
     ui.week = currentWeekNumber();
     saveState();
     $('onboard').classList.remove('open');
@@ -2127,6 +3595,43 @@ function bindEvents() {
   $('btnImportBackup').addEventListener('click', modalRestoreBackup);
   $('btnAddTodo').addEventListener('click', modalAddTodo);
   $('btnParseNotice').addEventListener('click', modalParseNotice);
+  $('assistantFile').addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const name = $('assistantFileName');
+    name.hidden = false;
+    name.textContent = `正在读取：${file.name}`;
+    try {
+      assistantAttachment = await extractAssistantFile(file);
+      name.textContent = assistantAttachment.pages && assistantAttachment.images?.length
+        ? `已载入：${assistantAttachment.name}（${assistantAttachment.images.length}/${assistantAttachment.pages} 页已转图片）`
+        : `已载入：${assistantAttachment.name}`;
+      $('btnAssistantCancelFile').hidden = false;
+    } catch (err) {
+      clearAssistantAttachment();
+      toast('读取失败：' + (err?.message || err));
+    }
+  });
+  $('btnAssistantCancelFile').addEventListener('click', clearAssistantAttachment);
+  $('btnAssistantAsk').addEventListener('click', runAssistant);
+  $('btnAssistantSaveChat').addEventListener('click', saveCurrentAssistantToHistory);
+  $('btnAssistantNewChat').addEventListener('click', () => {
+    if (ensureAssistantConversation().messages.length) saveCurrentAssistantToHistory();
+    else {
+      state.assistantCurrent = newAssistantConversation();
+      saveState();
+      renderAssistant();
+    }
+  });
+  $('btnAssistantClear').addEventListener('click', () => {
+    clearAssistantAttachment();
+    $('assistantQuestion').value = '';
+    $('assistantFileName').hidden = true;
+    $('assistantFileName').textContent = '';
+    $('assistantAnswerCard').hidden = true;
+    $('assistantAnswer').replaceChildren();
+  });
   $('btnRefreshAnn').addEventListener('click', () => refreshAnnouncements());
   $('btnSettings').addEventListener('click', () => switchView('me'));
   $('btnSync').addEventListener('click', () => {
@@ -2136,20 +3641,20 @@ function bindEvents() {
       toast('正在从教务系统刷新课表…');
       shell.refresh()
         .then((raw) => {
-          applyPack(normalizeSchedulePack(raw));
-          toast('课表已更新');
+          const result = applyPack(normalizeSchedulePack(raw), { preserveChanges: true });
+          if (!result.pending) toast('课表已更新');
         })
         .catch((e) => toast('刷新失败：' + (e?.message || e)));
       return;
     }
-    // 纯网页端受同源策略限制，改走书签抓取或手动导入。
-    if (document.getElementById('bookmarklet-src')?.textContent?.trim()) modalBookmarklet();
-    else modalImport();
+    // 纯网页版不提供教务系统刷新入口；保留防御性降级，避免旧缓存中的按钮失效。
+    modalImport();
   });
 
   $('modalClose').addEventListener('click', closeModal);
   $('modal').addEventListener('click', (e) => { if (e.target === $('modal')) closeModal(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+  window.addEventListener('pagehide', archiveAssistantConversation);
 
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {
@@ -2193,10 +3698,10 @@ const bridge = {
       : null,
 
   /** 原始抓取结果（YSRAW1 里的那个对象）或课表数据包 → 落库并切到周视图。 */
-  importRaw: (obj) => applyPack(normalizeSchedulePack(obj)),
+  importRaw: (obj, opts = {}) => applyPack(ensureEditableEntryIds(normalizeSchedulePack(obj)), opts),
 
   /** 分享码 / JSON 文本 → 落库。等价于用户手动粘贴。 */
-  importText: (text) => applyPack(parseAnyScheduleInput(text)),
+  importText: (text, opts = {}) => applyPack(parseAnyScheduleInput(text), opts),
 
   /**
    * 生成 ics 文本。壳可以写进文件、或交给系统日历应用订阅。
@@ -2225,7 +3730,8 @@ async function main() {
 
   // ?demo=1 直接载入虚构示例 —— 既是"先看看长什么样"的分享链接，也是构建后的冒烟测试入口
   if (q.get('demo') === '1') {
-    state.schedule = normalizeSchedulePack(demoPack());
+    state.scheduleBase = ensureEditableEntryIds(normalizeSchedulePack(demoPack()));
+    state.schedule = applyScheduleChanges(state.scheduleBase, state.scheduleChanges);
   }
 
   // 约定 A（见上方 bridge 注释）：壳在导航前把数据挂上来了。
@@ -2233,7 +3739,13 @@ async function main() {
   let injected = false;
   if (globalThis.__YS_PACK__) {
     try {
-      state.schedule = normalizeSchedulePack(globalThis.__YS_PACK__);
+      const injectedPack = ensureEditableEntryIds(normalizeSchedulePack(globalThis.__YS_PACK__));
+      if (state.scheduleChanges.length && state.scheduleBase) {
+        applyPack(injectedPack);
+      } else {
+        state.scheduleBase = injectedPack;
+        state.schedule = injectedPack;
+      }
       injected = true;
     } catch (e) {
       // 不打断启动：让用户看到本地已有的课表，比白屏好
@@ -2245,6 +3757,7 @@ async function main() {
   applySettings();
   bindEvents();
   bindSettings();
+  configureBrowserOnlyMode();
   if (state.schedule) ui.week = currentWeekNumber();
   renderAll();
   switchView(q.get('view') || 'week');

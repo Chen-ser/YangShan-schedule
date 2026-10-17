@@ -280,6 +280,10 @@ function build() {
     ...Object.entries(ocrLangs).map(([lang, file]) =>
       `<script type="text/plain" id="ocr-data-${lang}">${readFileSync(join(ROOT, 'vendor', 'ocr', file)).toString('base64')}</script>`),
   ].join('\n');
+  // PDF.js 作为独立 module 内联，避免把它和主应用拼进同一个作用域；
+  // 它会把公开 API 暴露到 globalThis.pdfjsLib，网页、Android WebView、Windows WebView2 共用。
+  const pdfJsSource = guardScript(readFileSync(join(ROOT, 'vendor', 'pdfjs', 'pdf.min.mjs'), 'utf8'));
+  const pdfJsInline = `<script type="module">${pdfJsSource}</script>`;
 
   assertBrowserSafe(coreSrc, 'core');
   assertBrowserSafe(appSrc, 'app');
@@ -403,6 +407,7 @@ self.addEventListener('fetch', (e) => {
       .replace('/*{{BOOKMARKLET}}*/', () => bookmarklet)
       .replace('/*{{ANN_EXAMPLE}}*/', () => annExample)
       .replace('<!--{{OCRLIBS}}-->', () => ocrLibs || '')
+      .replace('<!--{{PDFJS}}-->', () => pdfJsInline)
       .replace('/*{{ICON16}}*/', () => icon16)
       .replace('/*{{ICON180}}*/', () => icon180)
       .replace('/*{{BRAND_LOGO}}*/', () => brandLogo)

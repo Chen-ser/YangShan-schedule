@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <domain-config>
+        <domain includeSubdomains="false">jwxt.bistu.edu.cn</domain>
+        <domain includeSubdomains="false">sso.bistu.edu.cn</domain>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="@raw/globalsign_rsa_ov_ssl_ca_2018" />
+        </trust-anchors>
+    </domain-config>
+</network-security-config>

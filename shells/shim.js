@@ -74,6 +74,7 @@
     status: function () { return call('status'); },
     forget: function () { return call('forget'); },
     notify: function (title, body) { post({ cmd: 'notify', title: title, body: body }); },
+    requestNotifications: function () { return call('requestNotifications'); },
     openExternal: function (url) { post({ cmd: 'open', url: url }); },
     // 把公告频道交给原生侧，让它在 App 关掉之后也能收。
     // 单向、不回包：前台服务是异步起来的，此刻回“成功”是不诚实 ——

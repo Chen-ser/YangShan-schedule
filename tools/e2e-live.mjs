@@ -45,11 +45,11 @@ const probe = async (site, needle) => {
   step('内核已启动（data-ready）', document.documentElement.dataset.ready, document.documentElement.dataset.ready === '1');
   if (document.documentElement.dataset.ready !== '1') return out;
 
-  // ---- 五个视图的标签栏 ----
+  // ---- 六个视图的标签栏 ----
   const tabs = [...document.querySelectorAll('.tabbar .tab')].map((b) => b.textContent.replace(/\d+$/, '').trim());
-  step('视图标签', tabs.join(' / '), tabs.length === 5);
-  step('标签是课表/逐日/待办/公告/我的',
-    tabs.join(','), ['课表', '逐日', '待办', '公告', '我的'].every((t, i) => tabs[i] === t));
+  step('视图标签', tabs.join(' / '), tabs.length === 6);
+  step('标签是课表/逐日/待办/助手/公告/设置',
+    tabs.join(','), ['课表', '逐日', '待办', '助手', '公告', '设置'].every((t, i) => tabs[i] === t));
 
   // ---- 没有课表时应弹出引导 ----
   step('首次进入显示引导', String(document.getElementById('onboard')?.classList.contains('open')),

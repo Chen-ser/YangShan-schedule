@@ -199,7 +199,7 @@ internal sealed class MainForm : Form
                     var payload = JsonSerializer.Serialize(new
                     {
                         name = "windows",
-                        version = "0.1.0",
+                        version = "0.1.9",
                         hasSchedule,
                         remembered = stored is not null,
                         username = stored?.User ?? _shell.Settings.Username,
@@ -224,6 +224,10 @@ internal sealed class MainForm : Form
                     _tray.ShowBalloonTip(6000, title ?? "仰山课表", body ?? "", ToolTipIcon.Info);
                     break;
                 }
+                case "requestNotifications":
+                    // Windows notifications use the tray balloon and need no runtime permission.
+                    Reply(id, true, "{\"granted\":true}", null);
+                    break;
                 case "open":
                 {
                     var url = root.TryGetProperty("url", out var url2) ? url2.GetString() : null;
@@ -288,7 +292,7 @@ internal sealed class MainForm : Form
         if (_web.CoreWebView2 is null) return;
         var script =
             "(function(){ if (!globalThis.YangShan) return 'no-bridge';" +
-            $" try {{ globalThis.YangShan.importRaw({packJson}); return 'ok'; }}" +
+            $" try {{ globalThis.YangShan.importRaw({packJson}, {{ preserveChanges: true }}); return 'ok'; }}" +
             " catch (e) { return 'error: ' + e.message; } })()";
         var result = await ShellRuntime.EvalAsync(_web, script);
         if (!result.Ok || result.Value != "ok")

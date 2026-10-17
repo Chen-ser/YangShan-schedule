@@ -44,6 +44,15 @@ import kotlin.concurrent.thread
  */
 class AnnPushService : Service() {
 
+    private enum class AnnouncementStatus { FRESH, NO_NEW, UNAVAILABLE }
+
+    private data class AnnouncementLookup(
+        val status: AnnouncementStatus,
+        val id: String = "",
+        val title: String = "",
+        val body: String = "",
+    )
+
     companion object {
         /** 断线后的退避起点与上限。 */
         private const val BACKOFF_MIN = 2_000L
@@ -68,8 +77,8 @@ class AnnPushService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        active = true
-        startInForeground("正在接收公告")
+        active = startInForeground("正在接收公告")
+        if (!active) stopSelf()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -77,14 +86,19 @@ class AnnPushService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        startInForeground("正在接收公告")
+        if (!startInForeground("正在接收公告")) {
+            active = false
+            stopSelf()
+            return START_NOT_STICKY
+        }
         startLoop()
         // START_STICKY：系统因为内存紧张把我们杀了之后，会自己把服务拉回来 ——
         // 这正是「关掉 App 也能收到」赖以成立的那一条。
         return START_STICKY
     }
 
-    private fun startInForeground(text: String) {
+    private fun startInForeground(text: String): Boolean {
+        if (!Notify.notificationsEnabled(this)) return false
         val n = Notify.ongoing(this, text)
         try {
             if (Build.VERSION.SDK_INT >= 29) {
@@ -96,9 +110,11 @@ class AnnPushService : Service() {
             } else {
                 startForeground(Notify.ID_ONGOING, n)
             }
+            return true
         } catch (e: Exception) {
             // 前台服务被系统拒绝（少见，但真机上出现过）。
             // 不抛 —— 推送失败不该让 App 崩掉。
+            return false
         }
     }
 
@@ -177,12 +193,15 @@ class AnnPushService : Service() {
     private fun onDoorbell() {
         // App 就在前台时，网页端自己会弹（还带点进去看详情的行为），这里让位。
         if (AnnPush.appVisible) return
-        val msg = latestAnnouncement()
-        if (msg == null) {
-            Notify.showAnnouncement(this, "ys-ann-latest", "有新公告", "打开仰山课表查看。")
-            return
+        val result = latestAnnouncement()
+        when (result.status) {
+            AnnouncementStatus.FRESH ->
+                Notify.showAnnouncement(this, result.id, result.title, result.body)
+            // 重连、重复门铃或公告源暂时不可用时不弹“有新公告”，
+            // 避免同一条 ntfy 消息造成通知刷屏。
+            AnnouncementStatus.NO_NEW,
+            AnnouncementStatus.UNAVAILABLE -> Unit
         }
-        Notify.showAnnouncement(this, msg.first, msg.second, msg.third)
     }
 
     /**
@@ -192,14 +211,14 @@ class AnnPushService : Service() {
      * 很久以前那条（比如「本课程群规」）。用第一条的话，管理员再发新公告时
      * 排在最前的还是它 —— 我们就永远弹不出新东西。
      */
-    private fun latestAnnouncement(): Triple<String, String, String>? {
+    private fun latestAnnouncement(): AnnouncementLookup {
         val url = AnnPush.annUrl(this)
-        if (url.isBlank()) return null
+        if (url.isBlank()) return AnnouncementLookup(AnnouncementStatus.UNAVAILABLE)
 
         val body = try {
             httpGet(url)
         } catch (e: Exception) {
-            return null
+            return AnnouncementLookup(AnnouncementStatus.UNAVAILABLE)
         }
 
         val arr: JSONArray = try {
@@ -209,7 +228,7 @@ class AnnPushService : Service() {
                 else -> JSONArray()
             }
         } catch (e: Exception) {
-            return null
+            return AnnouncementLookup(AnnouncementStatus.UNAVAILABLE)
         }
 
         var best: JSONObject? = null
@@ -224,10 +243,10 @@ class AnnPushService : Service() {
             }
         }
 
-        val a = best ?: return null
+        val a = best ?: return AnnouncementLookup(AnnouncementStatus.UNAVAILABLE)
         val id = a.optString("id").ifBlank { a.optString("title").ifBlank { "ys-ann" } }
         // 同一条公告只弹一次。重连、重启、切频道都不会重复打扰。
-        if (id == AnnPush.lastId(this)) return null
+        if (id == AnnPush.lastId(this)) return AnnouncementLookup(AnnouncementStatus.NO_NEW)
         AnnPush.setLastId(this, id)
 
         val title = a.optString("title").ifBlank { "有新公告" }
@@ -236,7 +255,7 @@ class AnnPushService : Service() {
             .replace(Regex("\\s+"), " ")
             .trim()
             .ifBlank { "打开仰山课表查看。" }
-        return Triple(title, id, text.take(150))
+        return AnnouncementLookup(AnnouncementStatus.FRESH, id, title, text.take(150))
     }
 
     private fun httpGet(url: String): String {

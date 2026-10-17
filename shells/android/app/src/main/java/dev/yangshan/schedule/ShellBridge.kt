@@ -23,6 +23,7 @@ class ShellBridge(private val host: Host) {
         fun onStatus(id: String)
         fun onForget(id: String)
         fun onNotify(title: String?, body: String?)
+        fun onRequestNotifications(id: String)
         fun onOpen(url: String?)
         fun onAnnPush(topic: String?, annUrl: String?, base: String?)
     }
@@ -45,6 +46,7 @@ class ShellBridge(private val host: Host) {
             "status" -> host.onStatus(id)
             "forget" -> host.onForget(id)
             "notify" -> host.onNotify(m.stringOrNull("title"), m.stringOrNull("body"))
+            "requestNotifications" -> host.onRequestNotifications(id)
             "open" -> host.onOpen(m.stringOrNull("url"))
             // 没有回包：这是单向的设置下发。成功与否由 status 的 annPush 字段反映。
             "annpush" -> host.onAnnPush(

@@ -1,10 +1,13 @@
 package dev.yangshan.schedule
 
 import android.app.Activity
+import android.content.ClipData
 import android.content.Intent
 import android.os.Bundle
+import android.view.Gravity
 import android.view.ViewGroup
 import android.webkit.WebView
+import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 
@@ -43,11 +46,29 @@ class SchoolActivity : Activity(), SchoolWeb.Listener {
         }
 
         web = WebView(this)
+        val actions = LinearLayout(this).apply {
+            gravity = Gravity.END
+            addView(Button(this@SchoolActivity).apply {
+                text = "导出诊断日志"
+                setOnClickListener { shareDiagnostics() }
+            })
+            addView(Button(this@SchoolActivity).apply {
+                text = "关闭"
+                setOnClickListener { closeWithFailure() }
+            })
+        }
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(
                 status,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+            addView(
+                actions,
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -73,6 +94,7 @@ class SchoolActivity : Activity(), SchoolWeb.Listener {
     }
 
     override fun onStep(message: String) {
+        DiagLog.event("ui-step $message")
         status.text = message
     }
 
@@ -91,19 +113,49 @@ class SchoolActivity : Activity(), SchoolWeb.Listener {
 
     override fun onFailed(reason: String) {
         if (done) return
+        // 失败原因就是这次抓取的最终结果，必须立刻用 done 钉住。
+        // 以前这里不置 done：用户看完提示按返回键 → closeWithFailure() 发现 done 还是
+        // false → 又 setResult 一次「已取消」，把真正的诊断信息盖掉（SchoolWeb.fail()
+        // 已经把 finished 置 true 了，school.cancel() 会早返回，挡不住这次覆盖）。
         done = true
+        DiagLog.event("ui-failed reason=$reason")
         setResult(RESULT_CANCELED, Intent().putExtra(EXTRA_ERROR, reason))
+        status.text = "$reason\n\n请点击“导出诊断日志”，把日志分享出来。"
+    }
+
+    private fun shareDiagnostics() {
+        val text = DiagLog.export(this)
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "仰山课表诊断日志")
+            putExtra(Intent.EXTRA_TEXT, text)
+            clipData = ClipData.newPlainText("仰山课表诊断日志", text)
+        }
+        startActivity(Intent.createChooser(send, "分享诊断日志"))
+    }
+
+    private fun closeWithFailure() {
+        if (!done) {
+            // 用户主动按返回：先让 SchoolWeb 停下，它会回调 onFailed("已取消")，
+            // 由那里把 done 置 true 并写结果。这里只兜底，绝不覆盖已有结果。
+            school.cancel()
+        }
+        if (!done) {
+            done = true
+            setResult(RESULT_CANCELED, Intent().putExtra(EXTRA_ERROR, "已取消"))
+        }
         finish()
     }
 
     @Deprecated("Activity 自带的返回键回调")
     override fun onBackPressed() {
         if (done) {
+            // 已经出结果了（抓到了，或者失败了并写了具体原因）——直接走默认返回，
+            // 让那个结果原样交回 MainActivity。
             super.onBackPressed()
             return
         }
-        // 人退出了，得让发起方别再等下去 —— cancel() 会走 onFailed → finish()。
-        school.cancel()
+        closeWithFailure()
     }
 
     override fun onDestroy() {

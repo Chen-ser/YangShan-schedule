@@ -8,22 +8,42 @@
 // 所以改规则既不需要用户重新存书签，也不需要重新装客户端。
 
 (function () {
-  var API_USER = '/jwapp/sys/homeapp/api/home/currentUser.do';
-  var API_WEEKS = '/jwapp/sys/kbbpapp/api/schoolCalendar/getTermWeeks.do';
-  var API_SCHED = '/jwapp/sys/homeapp/api/home/student/getMyScheduleDetail.do';
+  // Use absolute URLs. Android WebView can expose the school page with the
+  // literal *default route as a non-standard document base, which makes
+  // a relative fetch fail before any request is sent.
+  var API_ORIGIN = 'https://jwxt.bistu.edu.cn';
+  var API_USER = API_ORIGIN + '/jwapp/sys/homeapp/api/home/currentUser.do';
+  var API_WEEKS = API_ORIGIN + '/jwapp/sys/kbbpapp/api/schoolCalendar/getTermWeeks.do';
+  var API_SCHED = API_ORIGIN + '/jwapp/sys/homeapp/api/home/student/getMyScheduleDetail.do';
   var RAW_PREFIX = 'YSRAW1-';
 
-  function get(url) {
+  function get(url, onLog) {
     return fetch(url, {
       credentials: 'include',
       headers: { 'X-Requested-With': 'XMLHttpRequest' },
     }).then(function (r) {
-      if (!r.ok) throw new Error(url + ' → HTTP ' + r.status);
-      return r.json();
+      return r.text().then(function (text) {
+        var summary = 'status=' + r.status + ' bytes=' + text.length;
+        if (!r.ok) {
+          if (onLog) onLog('GET ' + url + ' ' + summary);
+          throw new Error(url + ' → HTTP ' + r.status);
+        }
+        var value;
+        try { value = JSON.parse(text); } catch (e) {
+          if (onLog) onLog('GET ' + url + ' ' + summary + ' invalid-json');
+          throw new Error(url + ' → 返回内容不是 JSON');
+        }
+        if (onLog) onLog('GET ' + url + ' ' + summary + ' ' + describe(value));
+        return value;
+      });
+    }).catch(function (e) {
+      if (onLog) onLog('GET fetch-reject name=' + ((e && e.name) || 'Error') +
+        ' message=' + ((e && e.message) || e));
+      throw e;
     });
   }
 
-  function post(url, body) {
+  function post(url, body, onLog) {
     return fetch(url, {
       method: 'POST',
       credentials: 'include',
@@ -33,9 +53,36 @@
       },
       body: body,
     }).then(function (r) {
-      if (!r.ok) throw new Error(url + ' → HTTP ' + r.status);
-      return r.json();
+      return r.text().then(function (text) {
+        var summary = 'status=' + r.status + ' bytes=' + text.length;
+        if (!r.ok) {
+          if (onLog) onLog('POST ' + url + ' ' + summary);
+          throw new Error(url + ' → HTTP ' + r.status);
+        }
+        var value;
+        try { value = JSON.parse(text); } catch (e) {
+          if (onLog) onLog('POST ' + url + ' ' + summary + ' invalid-json');
+          throw new Error(url + ' → 返回内容不是 JSON');
+        }
+        if (onLog) onLog('POST ' + url + ' ' + summary + ' ' + describe(value));
+        return value;
+      });
+    }).catch(function (e) {
+      if (onLog) onLog('POST fetch-reject name=' + ((e && e.name) || 'Error') +
+        ' message=' + ((e && e.message) || e));
+      throw e;
     });
+  }
+
+  function describe(value) {
+    if (Array.isArray(value)) return 'array=' + value.length;
+    if (!value || typeof value !== 'object') return 'type=' + typeof value;
+    var keys = Object.keys(value).slice(0, 12).join(',');
+    var d = value.datas;
+    var detail = d && typeof d === 'object'
+      ? ' datasKeys=' + Object.keys(d).slice(0, 12).join(',')
+      : '';
+    return 'objectKeys=' + keys + detail;
   }
 
   function b64url(str) {
@@ -51,6 +98,7 @@
   function capture(opts) {
     opts = opts || {};
     var say = opts.onStep || function () {};
+    var log = opts.onLog || function () {};
     var source = opts.source || 'page';
     var captured = {
       kind: 'yangshan-raw',
@@ -61,8 +109,9 @@
     var termCode = '';
     var studentCode = '';
 
+    log('capture-start source=' + source);
     say('读取当前用户…');
-    return get(API_USER)
+    return get(API_USER, log)
       .then(function (cu) {
         captured.currentUser = cu;
         var d = (cu && cu.datas) || cu || {};
@@ -75,15 +124,21 @@
           wi.xh ||
           '';
         if (!termCode) {
+          log('current-user missing-term-code');
           throw new Error('没读到当前学期代码，可能是登录已过期。请重新登录教务系统后再试一次。');
         }
+        log('current-user ok term-present=true student-present=' + (!!studentCode));
         say('当前学期 ' + termCode + '，读取周历…');
-        return post(API_WEEKS, 'XNXQDM=' + encodeURIComponent(termCode));
+        return post(API_WEEKS, 'XNXQDM=' + encodeURIComponent(termCode), log);
       })
       .then(function (weeks) {
         captured.termWeeks = weeks;
         var arr = (weeks && weeks.datas && weeks.datas.getTermWeeks) || [];
-        if (!arr.length) throw new Error('教务系统没有返回学期周历（可能这一学期还没开始）。');
+        if (!arr.length) {
+          log('term-weeks empty');
+          throw new Error('教务系统没有返回学期周历（可能这一学期还没开始）。');
+        }
+        log('term-weeks count=' + arr.length);
         say('共 ' + arr.length + ' 周，读取课表…');
         var body =
           'termCode=' + encodeURIComponent(termCode) +
@@ -91,14 +146,16 @@
             ? '&studentCode=' + encodeURIComponent(studentCode) + '&xh=' + encodeURIComponent(studentCode)
             : '') +
           '&type=term';
-        return post(API_SCHED, body);
+        return post(API_SCHED, body, log);
       })
       .then(function (sched) {
         captured.scheduleDetail = sched;
         var list = (sched && sched.datas && sched.datas.arrangedList) || [];
         if (!list.length) {
+          log('schedule empty');
           throw new Error('这一学期没有读到任何课程。如果课表里确实有课，可能是教务系统改了接口。');
         }
+        log('schedule ok courses=' + list.length);
         say('已抓到 ' + list.length + ' 门课');
         return captured;
       });

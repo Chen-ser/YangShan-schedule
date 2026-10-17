@@ -63,6 +63,13 @@ h1, h2, h3 { margin: 0; font-weight: 600; }
 a { color: var(--accent); }
 
 #app { display: flex; flex-direction: column; min-height: 100%; }
+html.schedule-drag-lock,
+html.schedule-drag-lock body {
+  overscroll-behavior: none;
+}
+html.schedule-drag-lock body {
+  overflow: hidden;
+}
 
 /* ---------------------------------------------------------- 顶栏 */
 .topbar {
@@ -143,6 +150,18 @@ a { color: var(--accent); }
 .ghost-btn:active { transform: scale(.97); }
 .weekbar .ghost-btn { flex: 0 0 auto; }
 
+.schedule-mode {
+  display: flex; justify-content: center; gap: 0; margin: 0 0 10px;
+}
+.mode-btn {
+  border: 1px solid var(--border); background: var(--card); color: var(--muted);
+  padding: 6px 16px; font-size: 13px; line-height: 1.2;
+}
+.mode-btn:first-child { border-radius: 9px 0 0 9px; }
+.mode-btn:last-child { border-radius: 0 9px 9px 0; margin-left: -1px; }
+.mode-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.mode-btn:active { transform: scale(.98); }
+
 /* ---------------------------------------------------------- 课表网格 */
 .grid-wrap {
   background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
@@ -183,10 +202,15 @@ a { color: var(--accent); }
   display: flex; flex-direction: column; gap: 1px;
   min-width: 0;                 /* 关键：不加的话内部 nowrap 会把整列撑开，把页面顶出横向滚动条 */
   background: var(--c0);
+  /* 未长按时允许页面滚动；进入 .dragging 后由脚本锁定页面。 */
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 .course b { font-weight: 600; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .course i { font-style: normal; font-size: .88em; opacity: .9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .course .ct { font-size: .82em; opacity: .82; }
+.course.dragging { opacity: .72; outline: 2px solid var(--accent); cursor: grabbing; touch-action: none; }
 .course.c0 { background: var(--c0); } .course.c1 { background: var(--c1); }
 .course.c2 { background: var(--c2); } .course.c3 { background: var(--c3); }
 .course.c4 { background: var(--c4); } .course.c5 { background: var(--c5); }
@@ -214,6 +238,12 @@ a { color: var(--accent); }
   background: var(--accent-soft); color: var(--accent);
 }
 .unsched-item p { margin: 3px 0 0; }
+.change-item { display: flex; align-items: flex-start; gap: 8px; padding: 9px 0; border-top: 1px solid var(--border); }
+.change-item:first-child { border-top: 0; }
+.change-item-main { flex: 1; min-width: 0; }
+.change-item-main b { display: block; overflow-wrap: anywhere; }
+.change-item-main span { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+.change-item .icon-btn { flex: 0 0 auto; }
 
 /* ---------------------------------------------------------- 导入三选一 */
 /* 拖文件进导入框时的提示态（文本域和卡片都要）*/
@@ -374,7 +404,7 @@ textarea { width: 100%; min-height: 130px; resize: vertical; font-family: ui-mon
 /* ---------------------------------------------------------- 底部导航 */
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
-  display: grid; grid-template-columns: repeat(5, 1fr);
+  display: grid; grid-template-columns: repeat(6, 1fr);
   height: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
   padding-bottom: env(safe-area-inset-bottom);
   background: color-mix(in srgb, var(--bg) 92%, transparent);
@@ -392,6 +422,35 @@ textarea { width: 100%; min-height: 130px; resize: vertical; font-family: ui-mon
   background: var(--danger); color: #fff; font-size: 10px; line-height: 16px;
   text-align: center; font-weight: 600;
 }
+
+/* ---------------------------------------------------------- 智能助手 */
+.assistant-drop {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px; min-height: 86px; margin: 10px 0; padding: 14px;
+  border: 1px dashed var(--border); border-radius: var(--radius);
+  background: var(--bg); cursor: pointer; text-align: center;
+}
+.assistant-drop:hover, .assistant-drop:focus-within { border-color: var(--accent); background: var(--accent-soft); }
+.assistant-drop input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.assistant-file { padding: 7px 9px; border-left: 3px solid var(--accent); background: var(--accent-soft); font-size: 13px; }
+.assistant-cancel-file { margin-top: 7px; }
+.assistant-question { width: 100%; min-height: 90px; resize: vertical; }
+.assistant-answer-card { border-left: 3px solid var(--accent); }
+.assistant-answer { line-height: 1.65; overflow-wrap: anywhere; }
+.assistant-answer h3, .assistant-answer h4 { margin: 10px 0 4px; }
+.assistant-answer p { margin: 6px 0; }
+.assistant-answer ul, .assistant-answer ol { margin: 6px 0; padding-left: 22px; }
+.assistant-conversation, .assistant-history { display: grid; gap: 8px; }
+.assistant-message { padding: 8px 10px; border-radius: 8px; background: var(--bg); white-space: pre-wrap; overflow-wrap: anywhere; }
+.assistant-message.user { border-left: 3px solid var(--accent); }
+.assistant-message.assistant { border-left: 3px solid var(--muted); }
+.assistant-message small { display: block; color: var(--muted); margin-bottom: 3px; }
+.assistant-history-item { display: flex; align-items: flex-start; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border); }
+.assistant-history-item:first-child { border-top: 0; }
+.assistant-history-main { flex: 1; min-width: 0; }
+.assistant-history-main b, .assistant-history-main span { display: block; overflow-wrap: anywhere; }
+.assistant-history-main span { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.todo-item.long-pressing { outline: 2px solid var(--accent); }
 
 /* ---------------------------------------------------------- 模态 */
 .modal {

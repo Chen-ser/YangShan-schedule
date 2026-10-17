@@ -4,8 +4,11 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.Manifest
+import android.content.pm.PackageManager
 import android.content.Context
 import android.content.Intent
+import androidx.core.content.ContextCompat
 
 /**
  * 系统通知。全部集中在这里，因为渠道（NotificationChannel）必须与通知一起考虑：
@@ -35,6 +38,12 @@ object Notify {
 
     private fun manager(ctx: Context) =
         ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+    fun notificationsEnabled(ctx: Context): Boolean =
+        manager(ctx).areNotificationsEnabled() &&
+            (android.os.Build.VERSION.SDK_INT < 33 ||
+                ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) ==
+                PackageManager.PERMISSION_GRANTED)
 
     private fun channel(ctx: Context, id: String, name: String, importance: Int) {
         val nm = manager(ctx)

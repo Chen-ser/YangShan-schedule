@@ -10,6 +10,8 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
 import androidx.webkit.WebViewAssetLoader
 import org.json.JSONObject
 
@@ -28,21 +30,20 @@ class MainActivity : Activity(), ShellBridge.Host {
         private const val ENTRY_URL = "$ORIGIN/assets/index.html"
         private const val REQ_LOGIN = 4001
         private const val REQ_NOTIFY = 4002
+        private const val REQ_FILE = 4003
     }
 
     private lateinit var web: WebView
 
     /** 正在处理的请求 id（来自 shim 那一侧的 id），抓完用它把结果送回去。 */
     private var pendingId: String? = null
+    private var pendingNotifyId: String? = null
+    private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         // Android 13 起通知要用户点头。不给也能用，只是后台刷新完没法提示。
-        if (Build.VERSION.SDK_INT >= 33) {
-            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFY)
-        }
-
         web = WebView(this).apply {
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -52,8 +53,30 @@ class MainActivity : Activity(), ShellBridge.Host {
             settings.domStorageEnabled = true // 内核靠 localStorage 存课表
             settings.databaseEnabled = true
             settings.allowFileAccess = false
-            settings.allowContentAccess = false
+            settings.allowContentAccess = true
             settings.mediaPlaybackRequiresUserGesture = true
+        }
+        web.webChromeClient = object : WebChromeClient() {
+            override fun onShowFileChooser(
+                view: WebView?,
+                filePathCallback: ValueCallback<Array<Uri>>?,
+                fileChooserParams: FileChooserParams?,
+            ): Boolean {
+                fileChooserCallback?.onReceiveValue(null)
+                fileChooserCallback = filePathCallback
+                return try {
+                    val intent = fileChooserParams?.createIntent()
+                        ?: Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                            addCategory(Intent.CATEGORY_OPENABLE)
+                            type = "*/*"
+                        }
+                    startActivityForResult(intent, REQ_FILE)
+                    true
+                } catch (_: Exception) {
+                    fileChooserCallback = null
+                    false
+                }
+            }
         }
         web.addJavascriptInterface(ShellBridge(this), "YangShanNative")
 
@@ -128,6 +151,37 @@ class MainActivity : Activity(), ShellBridge.Host {
         startActivityForResult(i, REQ_LOGIN)
     }
 
+    @Deprecated("Activity 自带的回调")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == REQ_FILE) {
+            val callback = fileChooserCallback
+            fileChooserCallback = null
+            val result = if (resultCode == RESULT_OK) {
+                val clip = data?.clipData
+                when {
+                    clip != null -> Array(clip.itemCount) { i -> clip.getItemAt(i).uri }
+                    data?.data != null -> arrayOf(data.data!!)
+                    else -> null
+                }
+            } else null
+            callback?.onReceiveValue(result)
+            return
+        }
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_LOGIN) return
+        val id = pendingId
+        pendingId = null
+        if (id == null) return
+
+        val raw = data?.getStringExtra(SchoolActivity.EXTRA_RAW)
+        if (resultCode == RESULT_OK && !raw.isNullOrBlank()) {
+            Store.saveRaw(this, raw)
+            replyOk(id, raw)
+        } else {
+            replyError(id, data?.getStringExtra(SchoolActivity.EXTRA_ERROR) ?: "没有抓到课表。")
+        }
+    }
+
     override fun onStatus(id: String) {
         // YangShan.hasSchedule() 是个同步函数，但只有页面里才有它。
         web.evaluateJavascript(
@@ -137,11 +191,12 @@ class MainActivity : Activity(), ShellBridge.Host {
             val creds = Creds.load(this)
             val status = JSONObject()
                 .put("name", "android")
-                .put("version", "0.1.0")
+                .put("version", BuildConfig.VERSION_NAME)
                 .put("hasSchedule", value?.trim('"') == "true")
                 .put("remembered", creds != null)
                 .put("autoRefresh", true)
                 .put("autoRefreshMinutes", 60)
+                .put("notificationsGranted", Notify.notificationsEnabled(this))
                 // 关掉 App 也能收到公告 —— 由前台服务维持一条到 ntfy 的长连接。
                 .put("annPush", AnnPush.enabled(this) && AnnPushService.active)
             if (creds != null) status.put("username", creds.first) else status.put("username", JSONObject.NULL)
@@ -163,8 +218,38 @@ class MainActivity : Activity(), ShellBridge.Host {
         runOnUiThread { Notify.show(this, title ?: "仰山课表", body.orEmpty()) }
     }
 
+    override fun onRequestNotifications(id: String) {
+        runOnUiThread {
+            if (Build.VERSION.SDK_INT < 33 || Notify.notificationsEnabled(this)) {
+                reply(JSONObject().put("id", id).put("ok", true).put("pack", JSONObject().put("granted", true)))
+                return@runOnUiThread
+            }
+            pendingNotifyId = id
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFY)
+        }
+    }
+
     override fun onOpen(url: String?) {
         if (!url.isNullOrBlank()) open(url)
+    }
+
+    @Deprecated("Activity自带的权限回调")
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQ_NOTIFY) return
+        val id = pendingNotifyId ?: return
+        pendingNotifyId = null
+        val granted = Notify.notificationsEnabled(this)
+        if (granted) {
+            AnnPush.apply(this)
+            reply(JSONObject().put("id", id).put("ok", true).put("pack", JSONObject().put("granted", true)))
+        } else {
+            reply(JSONObject().put("id", id).put("ok", false).put("error", "请在系统设置中允许仰山课表通知。"))
+        }
     }
 
     /**
@@ -184,24 +269,6 @@ class MainActivity : Activity(), ShellBridge.Host {
 
     // ── 抓取回来的路上 ──────────────────────────────────────────────────────
 
-    @Deprecated("Activity 自带的回调，用的是老签名")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQ_LOGIN) return
-
-        val id = pendingId
-        pendingId = null
-        if (id == null) return
-
-        val raw = data?.getStringExtra(SchoolActivity.EXTRA_RAW)
-        if (resultCode == RESULT_OK && !raw.isNullOrBlank()) {
-            Store.saveRaw(this, raw)
-            replyOk(id, raw)
-        } else {
-            replyError(id, data?.getStringExtra(SchoolActivity.EXTRA_ERROR) ?: "没有抓到课表。")
-        }
-    }
-
     /**
      * 内核自己会把课表存进 localStorage，正常情况下用不上这里。
      * 但换手机、清数据、重装之后 localStorage 会空 —— 那时用 Store 里的备份把它填回去。
@@ -214,7 +281,10 @@ class MainActivity : Activity(), ShellBridge.Host {
               if (!globalThis.YangShan) return 'no-bridge';
               var localAt = Number(localStorage.getItem('yangshan-schedule/v1/updatedAt') || 0);
               if (YangShan.hasSchedule() && localAt >= ${rawAt} && ${rawAt} > 0) return 'local-newer';
-              try { YangShan.importText(${JSONObject.quote(raw)}); return 'restored'; }
+              try {
+                YangShan.importText(${JSONObject.quote(raw)}, { preserveChanges: true });
+                return 'restored';
+              }
               catch (e) { return 'error: ' + e.message; }
             })()
         """.trimIndent()

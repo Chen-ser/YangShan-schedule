@@ -124,15 +124,18 @@ cd shells\windows
 WebView2        154.0.4258.62（内核 1.0.3351.48）
 虚拟主机            yangshan.local → <数据目录>\app
 内核就绪            是
-页面探针            {"ready":"1","bridge":"object","bridgeVersion":"0.1.0","shell":"object",
+页面探针            {"ready":"1","bridge":"object","bridgeVersion":"<版本号>","shell":"object",
                      "shellName":"windows","tabs":5,"storage":"ok", …}
 内核桥             ✔ globalThis.YangShan 已就位
 壳接口             ✔ globalThis.YangShanShell 已注入
 本地存储            ✔ localStorage 可读可写（课表存得住）
-壳往返通信           ✔ {"name":"windows","version":"0.1.0","hasSchedule":false,"autoRefresh":true,…}
+壳往返通信           ✔ {"name":"windows","version":"<版本号>","hasSchedule":false,"autoRefresh":true,…}
 导入入口            ✔ YangShan.importRaw 可用
 结果：界面自检通过。
 ```
+
+> 上面是**示例输出**：`<版本号>` 处实际会打印 `package.json` 里的当前版本（构建时注入
+> `__VERSION__`），字段列表也可能随实现增减。
 
 界面自检的退出码就是判据：`0` 通过，`1` 不通过，报告写 `uitest.txt`。
 
