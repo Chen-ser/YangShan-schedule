@@ -167,32 +167,6 @@ examples/             公告源格式示例
 data/                 公告管理页使用的数据文件
 ```
 
-## Git 上传规则
-
-应提交：
-
-- 源码目录：`core/`、`web/`、`bookmarklet/`、`shells/`、`test/`、`tools/`
-- 文档和配置：`docs/`、`examples/`、`data/`、`.github/`、`package.json`、`.gitignore`、`LICENSE`
-- 运行资产：`vendor/ocr/`、`vendor/pdfjs/`
-
-不要提交：
-
-- `dist/`
-- `shells/android/local.properties`
-- Android/Gradle 构建目录和 APK/AAB
-- Windows 的 `bin/`、`obj/`、`out/`、`feed/`、`.nuget/`、`.dotnet/`
-- Windows 自检目录、报告和 ZIP
-- `*.local.json`、真实课表、账号、密码、Cookie、日志和 API Key
-
-提交前建议运行：
-
-```powershell
-git status --short --untracked-files=all
-node tools/check-secrets.mjs
-npm test
-git diff --check
-```
-
 ## 隐私
 
 - 网页课表、待办、修改记录和历史对话只保存在本机浏览器存储。
