@@ -1349,11 +1349,32 @@ t('ann: ntfy 地址与随机频道名', () => {
   ok(M.randomTopic('ys') !== M.randomTopic('ys'), '两次生成不应相同');
 });
 
-t('data: 仓库里的公告权威源合法、可解析、初始为空', () => {
+// 这里以前断言「初始为空」，结果把发布这条路堵死了：公告就是靠管理页提交这个文件发布的，
+// 只要发第一条，CI 的「跑测试」就红，构建与部署全被跳过 —— 线上永远停在空列表。
+// 所以改成校验结构：文件可以有条目，但每一条都必须能被学生端正常认下。
+t('data: 仓库里的公告权威源合法、可解析、每条都能被学生端认下', () => {
   const raw = JSON.parse(readFileSync(join(ROOT, 'data/announcements.json'), 'utf8'));
   ok(Array.isArray(raw.announcements), '必须有 announcements 数组');
-  deepEq(M.normalizeAnnouncements(raw), [], '初始状态不该有公告');
   ok(Array.isArray(raw._说明) && raw._说明.length > 0, '_说明 要在，它是给管理员看的');
+
+  const ids = new Set();
+  for (const a of raw.announcements) {
+    ok(a && typeof a === 'object', '每一条都必须是对象');
+    const id = String(a.id ?? '').trim();
+    ok(id !== '', '每条都必须有 id（学生端靠它去重，没 id 会重复提醒）');
+    ok(!ids.has(id), `id 重复了：${id}`);
+    ids.add(id);
+    ok(String(a.title ?? '').trim() !== '', `有公告缺标题（id=${id}）`);
+    ok(/^\d{4}-\d{2}-\d{2}$/.test(String(a.date ?? '')), `日期必须是 YYYY-MM-DD（id=${id}）`);
+    ok(['info', 'warn', 'urgent'].includes(a.level ?? 'info'), `级别只能是 info/warn/urgent（id=${id}）`);
+    ok(typeof (a.pinned ?? false) === 'boolean', `pinned 必须是布尔（id=${id}）`);
+    const cat = String(a.category ?? '');
+    ok(cat.length <= 12 && !/[\u0000-\u001f\u007f]/.test(cat), `类别最多 12 个字、不带控制字符（id=${id}）`);
+    const link = String(a.link ?? '');
+    ok(link === '' || /^https?:\/\//i.test(link), `链接要么留空、要么是 http(s)（id=${id}）`);
+  }
+  // 归一化后不该少东西：少一条就说明有一条缺标题又缺正文，学生端会静默丢掉它。
+  eq(M.normalizeAnnouncements(raw).length, raw.announcements.length, '不能有公告被解析器静默丢掉');
 });
 
 t('model: 提醒时间计算（提前 N 分钟）', () => {
