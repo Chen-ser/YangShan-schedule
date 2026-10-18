@@ -562,6 +562,10 @@ t('抓取失败要能就地重试，而且失败原因必须带上当时停在�
 
 function stripComments(src) {
   return src
+    // 先统一行尾。Windows 上签出的是 CRLF，而 `.` 不匹配 \r，
+    // `/\/\/.*$/` 碰到 "…\r" 就整条匹配不上 —— 注释里的 Buffer 会被当成真代码。
+    // 这不是理论问题：同一份仓库在 Linux（CI）上全绿、在 CRLF 签出上必挂。
+    .replace(/\r\n?/g, '\n')
     .replace(/\/\*[\s\S]*?\*\//g, ' ')
     .split('\n')
     .map((l) => l.replace(/\/\/.*$/, ''))
@@ -584,9 +588,16 @@ function assertBrowserSafe(rel) {
   }
 }
 
-t('core/schedule.mjs 不得引入任何 Node 专有 API', () => assertBrowserSafe('core/schedule.mjs'));
-t('core/model.mjs 不得引入任何 Node 专有 API', () => assertBrowserSafe('core/model.mjs'));
+t('core/schedule.mjs 不得引入任何 Node 专有 API', () => assertBrowserSafe('core/schedule.mjs'));t('core/model.mjs 不得引入任何 Node 专有 API', () => assertBrowserSafe('core/model.mjs'));
 t('core/officefile.mjs 不得引入任何 Node 专有 API', () => assertBrowserSafe('core/officefile.mjs'));
+
+t('剥注释前要统一行尾，否则 CRLF 签出上会误报', () => {
+  // 实测过一次：同一份仓库在 Linux（CI）全绿，在 Windows 的 CRLF 签出上必挂 ——
+  // 因为 `.` 不匹配 \r，`/\/\/.*$/` 碰到 "…\r" 整条不匹配，注释里的 Buffer 被当真代码。
+  const stripped = stripComments('// 注释里提到 Buffer 和 process.cwd\r\nconst a = 1;\r\n');
+  ok(!stripped.includes('Buffer'), 'CRLF 的注释行必须照样剥掉');
+  ok(stripped.includes('const a = 1;'), '真代码要留住');
+});
 
 // ================================================================ 1. UTF-8 / 哈希
 
