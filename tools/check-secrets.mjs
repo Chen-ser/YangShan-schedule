@@ -25,6 +25,7 @@ const SKIP_DIRS = new Set([
   join('shells', 'windows', '.dotnet'), join('shells', 'windows', '.nuget'),
   join('shells', 'windows', '_runtime'),
   join('shells', 'android', '.gradle'), join('shells', 'android', 'build'),
+  join('shells', 'android', '.gradle-build-home'), join('shells', 'android', '.kotlin'),
   join('shells', 'android', 'app', 'build'),
 ]);
 const SKIP_FILE_RE = /(\.local\.json|\.log|\.apk|\.aab)$/i;

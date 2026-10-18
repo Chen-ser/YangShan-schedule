@@ -1,6 +1,6 @@
 {
   "name": "yangshan-schedule",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "private": true,
   "description": "仰山课表 —— 北京信息科技大学智能课表。零服务器、零成本，课表只存在你自己的设备上。",
   "type": "module",

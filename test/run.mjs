@@ -2627,6 +2627,13 @@ t('密钥扫描器对第三方 vendor 代码不套用个人信息规则', () => 
   ok(src.includes('SKIP_PATHS'), '安卓 assets/index.html 是构建产物，会把 vendor 的误报再报一次');
 });
 
+t('密钥扫描器跳过 Gradle 自己的缓存目录', () => {
+  const src = readFileSync(join(ROOT, 'tools/check-secrets.mjs'), 'utf8');
+  ok(src.includes("join('shells', 'android', '.gradle-build-home')"),
+    'Gradle 缓存里的 .module 文件有大量 11 位版本号，实测把扫描从 99 个文件推到 6294 个、误报 23 处手机号');
+  ok(src.includes("join('shells', 'android', '.kotlin')"), '.kotlin 也是构建缓存，与 .gitignore 保持一致');
+});
+
 t('两个壳的图标都来自同一张徽章图，且启动器蒙版不会裁到画面', () => {
   const res = 'shells/android/app/src/main/res';
   const manifest = readFileSync(join(ROOT, 'shells/android/app/src/main/AndroidManifest.xml'), 'utf8');
@@ -2715,15 +2722,17 @@ t('安卓签名必须能钉死在 local.properties 里的那把钥匙上（否�
   ok(/^\*\.keystore$/m.test(ignores), '签名钥匙（*.keystore）永远不进货架：谁拿到它谁就能签官方包');
 });
 
-t('Windows 对外发的是「解压即用」的便携包，不是安装器', () => {
+t('Windows 对外发的是「解压即用」的便携包，布局与历史 r8 包一致', () => {
   const doc = readFileSync(join(ROOT, 'shells/README.md'), 'utf8');
   const sec = doc.slice(doc.indexOf('### 便携版打包'), doc.indexOf('### 自检'));
   ok(sec.length > 200, 'shells/README.md 要有「便携版打包」一节，写清对外发什么');
-  ok(sec.includes('--self-contained true'), '便携包必须自带 .NET 运行时，否则目标机双击打不开');
-  ok(sec.includes('-p:RestoreSources'), '要写清 RestoreSources 覆盖 NuGet.config 的 <clear />，否则报 NU1101');
-  ok(!/PublishTrimmed=true/.test(sec), 'WinForms 不能裁剪');
+  ok(sec.includes('外面不套任何文件夹'), '要写清 zip 里就是那 14 个文件本身，不套外层目录');
+  ok(sec.includes('是框架依赖版'), '要说清这是框架依赖版（目标机要有 .NET 10 桌面运行时）');
+  ok(sec.includes('不要用自包含版'), '自包含版在用户机器上打不开过，必须留下这条结论，别又有人试一遍');
+  ok(sec.includes('ls out | wc -l'), '要写清 bin 里残留运行时会把 out/ 从 14 个文件变成 227 个');
   ok(sec.includes('%LOCALAPPDATA%\\YangShanSchedule'), '要说清数据不在程序目录（解压到 U 盘也能跑）');
-  ok(sec.includes('WebView2'), '自包含只解决 .NET，WebView2 仍是系统组件，必须写明');
+  ok(sec.includes('WebView2'), 'WebView2 仍是系统组件，必须写明');
+  ok(!/self-contained true/.test(sec), '不要再把自包含当成默认发布方式写回文档');
 });
 
 const total = pass + failures.length;

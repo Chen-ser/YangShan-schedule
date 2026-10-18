@@ -216,7 +216,7 @@ class AnnPushService : Service() {
         val result = latestAnnouncement(source)
         when (result.status) {
             AnnouncementStatus.FRESH ->
-                Notify.showAnnouncement(this, result.id, result.title, result.body)
+                Notify.showAnnouncement(this, "${source.id}:${result.id}", result.title, result.body)
             // 重连、重复门铃或公告源暂时不可用时不弹“有新公告”，
             // 避免同一条 ntfy 消息造成通知刷屏。
             AnnouncementStatus.NO_NEW,

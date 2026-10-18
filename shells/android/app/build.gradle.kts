@@ -56,8 +56,8 @@ android {
         // 不用为老系统写一堆分支；2026 年这个下限不会挡到任何在读的同学。
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "0.1.9"
+        versionCode = 11
+        versionName = "0.1.10"
         resourceConfigurations += listOf("zh", "en")
     }
 

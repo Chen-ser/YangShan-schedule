@@ -61,7 +61,7 @@ function normalizeAnnouncementSource(raw) {
   if (url && !/^https?:\/\//i.test(url)) return null;
   if (topic && !TOPIC_RE.test(topic)) return null;
   if (!url) return null;
-  const isDefault = url === DEFAULT_ANNOUNCEMENT_SOURCE.url && topic === DEFAULT_ANNOUNCEMENT_SOURCE.topic;
+  const isDefault = url === DEFAULT_ANNOUNCEMENT_SOURCE.url || topic === DEFAULT_ANNOUNCEMENT_SOURCE.topic;
   if (isDefault) return null;
   return {
     id: String(raw?.id || randomAnnouncementSourceId()),
@@ -90,6 +90,7 @@ function migrateAnnouncementSettings(settings) {
   const migrated = normalizeAnnouncementSources(next.annSources);
   if (!migrated.length && (next.annUrl || next.annTopic)) {
     const legacy = normalizeAnnouncementSource({
+      id: `legacy-${fnv1a64(`${next.annUrl || ''}\n${next.annTopic || ''}`)}`,
       url: next.annUrl,
       topic: next.annTopic,
       name: '旧公告源',
@@ -101,6 +102,26 @@ function migrateAnnouncementSettings(settings) {
   next.annUrl = '';
   next.annTopic = '';
   return next;
+}
+
+function migrateCachedAnnouncementIds(announcements, readIds, originalSettings, migratedSettings) {
+  const oldUrl = String(originalSettings?.annUrl ?? '').trim();
+  const oldTopic = String(originalSettings?.annTopic ?? '').trim();
+  const defaultWasSource = oldUrl === DEFAULT_ANNOUNCEMENT_SOURCE.url &&
+    (!oldTopic || oldTopic === DEFAULT_ANNOUNCEMENT_SOURCE.topic);
+  const source = defaultWasSource
+    ? DEFAULT_ANNOUNCEMENT_SOURCE
+    : normalizeAnnouncementSources(migratedSettings.annSources)[0];
+  if (!source) return { announcements, readIds };
+  const idMap = new Map();
+  const migratedAnnouncements = announcements.map((a) => {
+    if (a?.sourceId || String(a?.id ?? '').startsWith(`${source.id}:`)) return a;
+    const id = `${source.id}:${a.id}`;
+    idMap.set(String(a.id), id);
+    return { ...a, id, sourceId: source.id, sourceName: source.name || '' };
+  });
+  const migratedReadIds = readIds.map((id) => idMap.get(String(id)) || id);
+  return { announcements: migratedAnnouncements, readIds: migratedReadIds };
 }
 
 // ================================================================ 工具
@@ -205,16 +226,24 @@ function loadState() {
     const raw = localStorage.getItem(LS_KEY);
     if (!raw) return false;
     const o = JSON.parse(raw);
+    const originalSettings = o.settings ?? {};
+    const settings = migrateAnnouncementSettings({ ...DEFAULT_SETTINGS, ...originalSettings });
+    const cached = migrateCachedAnnouncementIds(
+      Array.isArray(o.announcements) ? o.announcements : [],
+      Array.isArray(o.readAnnouncements) ? o.readAnnouncements : [],
+      originalSettings,
+      settings,
+    );
     state = {
       schedule: o.schedule ?? null,
       scheduleBase: o.scheduleBase ?? o.schedule ?? null,
       scheduleChanges: Array.isArray(o.scheduleChanges) ? o.scheduleChanges : [],
       todos: Array.isArray(o.todos) ? o.todos : [],
-      readAnnouncements: Array.isArray(o.readAnnouncements) ? o.readAnnouncements : [],
-      announcements: Array.isArray(o.announcements) ? o.announcements : [],
+      readAnnouncements: cached.readIds,
+      announcements: cached.announcements,
       localAnnouncements: Array.isArray(o.localAnnouncements) ? o.localAnnouncements : [],
       announcementsFetchedAt: o.announcementsFetchedAt ?? '',
-      settings: migrateAnnouncementSettings({ ...DEFAULT_SETTINGS, ...(o.settings ?? {}) }),
+      settings,
       assistantCurrent: o.assistantCurrent ?? null,
       assistantHistory: Array.isArray(o.assistantHistory) ? o.assistantHistory : [],
     };
@@ -2184,7 +2213,7 @@ function notifyNewAnnouncements(fresh) {
 
 // ---------------------------------------------------------------- 推送订阅
 
-let annSse = [];      // 当前的 EventSource 列表
+let annSse = new Map(); // sourceId -> EventSource
 const annSseTries = new Map();
 
 /**
@@ -2194,33 +2223,45 @@ const annSseTries = new Map();
  * 去重新拉一遍 announcements.json。所以就算频道名泄露、有人往频道里灌假消息，
  * 也只能让用户多刷一次公告，注入不了任何文字 —— 公告内容的唯一来源永远是那个 JSON。
  */
+function openAnnouncementPush(source) {
+  if (typeof EventSource === 'undefined') return;
+  const old = annSse.get(source.id);
+  if (old) {
+    try { old.close(); } catch { /* 已经关了 */ }
+    annSse.delete(source.id);
+  }
+  let es;
+  try {
+    es = new EventSource(ntfySseUrl(source.topic));
+  } catch (e) {
+    console.warn('订阅推送失败', sourceLabel(source), e);
+    return;
+  }
+  annSse.set(source.id, es);
+  annSseTries.set(source.id, annSseTries.get(source.id) || 0);
+  es.addEventListener('open', () => annSseTries.set(source.id, 0));
+  es.addEventListener('message', () => refreshAnnouncements(true));
+  es.addEventListener('error', () => {
+    try { es.close(); } catch { /* 忽略 */ }
+    if (annSse.get(source.id) === es) annSse.delete(source.id);
+    const tries = Math.min((annSseTries.get(source.id) || 0) + 1, 6);
+    annSseTries.set(source.id, tries);
+    const delay = Math.min(30000, 2000 * 2 ** (tries - 1));
+    setTimeout(() => {
+      const current = allAnnouncementSources().find((item) => item.id === source.id);
+      if (current?.topic && TOPIC_RE.test(current.topic) && !annSse.has(source.id)) {
+        openAnnouncementPush(current);
+      }
+    }, delay);
+  });
+}
+
 function subscribeAnnouncePush() {
-  for (const es of annSse) { try { es.close(); } catch { /* 已经关了 */ } }
-  annSse = [];
+  for (const es of annSse.values()) { try { es.close(); } catch { /* 已经关了 */ } }
+  annSse.clear();
   if (typeof EventSource === 'undefined') return;
   for (const source of allAnnouncementSources().filter((item) => item.topic && TOPIC_RE.test(item.topic))) {
-    let es;
-    try {
-      es = new EventSource(ntfySseUrl(source.topic));
-    } catch (e) {
-      console.warn('订阅推送失败', sourceLabel(source), e);
-      continue;
-    }
-    es.__ysSourceId = source.id;
-    annSse.push(es);
-    annSseTries.set(source.id, 0);
-    es.addEventListener('open', () => annSseTries.set(source.id, 0));
-    es.addEventListener('message', () => refreshAnnouncements(true));
-    es.addEventListener('error', () => {
-      try { es.close(); } catch { /* 忽略 */ }
-      annSse = annSse.filter((item) => item !== es);
-      const tries = Math.min((annSseTries.get(source.id) || 0) + 1, 6);
-      annSseTries.set(source.id, tries);
-      const delay = Math.min(30000, 2000 * 2 ** (tries - 1));
-      setTimeout(() => {
-        if (!annSse.some((item) => item && item.__ysSourceId === source.id)) subscribeAnnouncePush();
-      }, delay);
-    });
+    openAnnouncementPush(source);
   }
 }
 
@@ -3417,13 +3458,13 @@ function modalRestoreBackup() {
       if (state.scheduleBase) rebuildSchedule();
       state.todos = b.todos;
       state.readAnnouncements = b.readAnnouncements;
-      state.settings = {
+      state.settings = migrateAnnouncementSettings({
         ...DEFAULT_SETTINGS,
         ...b.settings,
         // 备份里刻意不含 API Key（见 core/model.mjs 的 settingsForBackup），
         // 所以这里保留本机原来那把，别让人恢复一次备份就把 Key 弄丢。
         aiApiKey: state.settings.aiApiKey || '',
-      };
+      });
       state.settings.pdfPageLimit = normalizePdfPageLimit(state.settings.pdfPageLimit);
       // 备份里没有助手对话时（默认导出就不带）保持本机现有对话不动，
       // 否则恢复一次备份就会把用户聊了很多天的记录清空。
@@ -4130,7 +4171,7 @@ async function main() {
     checkReminders();
     refreshAnnouncements(true);
     // 手机浏览器在后台会掐掉 SSE，切回来的这一刻顺手确认还连着
-    if (!annSse.length) subscribeAnnouncePush();
+    if (!annSse.size) subscribeAnnouncePush();
   });
 
   setInterval(() => { renderNowCard(); checkReminders(); }, 60 * 1000);

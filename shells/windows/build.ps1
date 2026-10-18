@@ -64,6 +64,7 @@ try {
 Step 3 'compiling'
 $env:DOTNET_CLI_HOME = Join-Path $here '.dotnet'
 $env:NUGET_PACKAGES  = Join-Path $here '.nuget'
+$env:NUGET_SCRATCH   = Join-Path $here '.nuget-scratch'
 $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE = '1'
 $env:DOTNET_NOLOGO = '1'
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'

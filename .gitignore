@@ -43,6 +43,7 @@ shells/windows/.nuget-scratch-*
 
 # ── 安卓壳（shells/android）────────────────────────────────────────────────
 shells/android/.gradle/
+shells/android/.gradle-build-home/
 shells/android/.kotlin/
 shells/android/build/
 shells/android/app/build/

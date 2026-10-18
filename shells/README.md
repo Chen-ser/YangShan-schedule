@@ -131,29 +131,34 @@ cd shells\windows
 
 ### 便携版打包（不做安装器）
 
-对外只发一个 zip：解压 → 双击 `YangShanShell.exe`，不安装、不写注册表、不要 .NET 运行时。
-`install.ps1` / `installer.cmd` / `uninstall.ps1` 留在仓库里备查（想装进「应用和功能」才用），
-打给用户的包里**不放**。
+对外只发一个 zip：**解压出来的就是那 14 个文件本身，外面不套任何文件夹**，双击
+`YangShanShell.exe` 就能用。不安装、不写注册表、不留安装脚本
+（`install.ps1` / `installer.cmd` / `uninstall.ps1` 留在仓库里备查，打给用户的包里不放）。
 
-```powershell
-# out\ 里的是框架依赖版（要求目标机装了 .NET 10 桌面运行时），只适合本机自测；
-# 发出去的那份必须自带运行时：
-dotnet publish YangShanShell.csproj -c Release -r win-x64 --self-contained true `
-  -p:PublishTrimmed=false -p:DebugType=none -p:RestoreSources="https://api.nuget.org/v3/index.json" -o ..\..\_pkg\YangShanSchedule
+这个布局与历史 r8 包（`仰山课表-Windows-PDF图片上传-v0.1.9-r8`）逐项一致：
+
+```
+Microsoft.Web.WebView2.{Core,WinForms,Wpf}.dll (+ .xml)
+YangShanShell.{exe,dll,deps.json,runtimeconfig.json,pdb}
+win-arm64/native/WebView2Loader.dll
+win-x64/native/WebView2Loader.dll
+win-x86/native/WebView2Loader.dll
 ```
 
-几个必须知道的点：
+打包就一句：`build.ps1` 产出的 `out/` 里**内容**压平打进去（不是把 `out` 目录打进去）。
 
-- **`-p:RestoreSources` 不能省。** `NuGet.config` 里 `<clear />` 了所有源、只留本地 `feed/`，
-  而 `feed/` 只有 WebView2 的 .nupkg —— 自包含发布要的
-  `Microsoft.WindowsDesktop.App.Runtime.win-x64` 在那里找不到，报 `NU1101`。
-- **体积换来的确定性**：自包含产物 124 MB（227 个文件），zip 后约 53 MB。
-  换来的是「目标机不需要装 .NET」。
+- **是框架依赖版**：目标机要有 .NET 10 桌面运行时。用这个包的人群（一直跟着更新的人）
+  机器上本来就有 —— 之前每个包都是这么发的。
+- **不要用自包含版。** 试过一次（自包含发布，124 MB / 227 个文件），
+  在本机构建机上解压能正常启动，但发到用户机器上打不开、且没留下崩溃日志（`ResolveDataRoot`
+  会写的那份 crash 日志根本没有），体积也大了一个数量级。默认继续发框架依赖版。
+- **踩过的坑（会静默毁掉 out/）**：跑过 `dotnet publish -r win-x64 --self-contained` 之后，
+  `bin/Release/net10.0-windows/win-x64/` 里会留下一整套运行时；而 `build.ps1` 是把这个目录
+  **递归**拷进 `out/` 的，于是 `out/` 悄悄从 14 个文件变成 227 个、124 MB。打包前先
+  `rm -rf bin obj out` 再跑 `build.ps1`，或者打完看一眼 `ls out | wc -l` 是不是 14。
 - **数据不在程序目录**：`Shell.ResolveDataRoot` 首选 `%LOCALAPPDATA%\YangShanSchedule`，
   所以解压到 U 盘、桌面、只读目录都能跑。删文件夹 = 卸载，数据另删。
-- **WebView2 运行时仍然是系统组件**：Windows 11 自带，Windows 10 装过新版 Edge 就有。
-  自包含只解决 .NET，解决不了这个。
-- 不要用 `PublishTrimmed`：WinForms 靠反射找类型，裁剪后运行时才炸。
+- **WebView2 运行时是系统组件**：Windows 11 自带，Windows 10 装过新版 Edge 就有。
 
 ### 自检（两个，都不用看界面）
 

@@ -27,7 +27,7 @@
     <Product>仰山课表</Product>
     <AssemblyTitle>仰山课表</AssemblyTitle>
     <Company>YangShan</Company>
-    <Version>0.1.9</Version>
+    <Version>0.1.10</Version>
     <SatelliteResourceLanguages>zh-Hans</SatelliteResourceLanguages>
 
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
