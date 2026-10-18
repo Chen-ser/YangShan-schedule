@@ -76,8 +76,8 @@ npm run build
 
 构建结果：
 
-- `dist/仰山课表.html`：单文件版本，可直接双击打开
-- `dist/site/`：托管版 PWA
+- `dist/仰山课表.html`：单文件版本，可直接双击打开（PDF worker 内联在里面，12.6 MB）
+- `dist/site/`：托管版 PWA（PDF worker 单独成文件，按需加载，首屏 1.2 MB）
 - `dist/bookmarklet.txt`：抓取书签工具
 
 预览：
