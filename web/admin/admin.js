@@ -18,8 +18,12 @@ const DEFAULT_CFG = {
   branch: 'main',
   path: 'data/announcements.json',
   token: '',
-  topic: '',
 };
+
+// 全体推送：全校只有这一条 ntfy 频道，没有「每个管理员挑一个频道」这回事。
+// 必须与 web/app.js 的 PUBLIC_PUSH_TOPIC 逐字相同（有测试盯着）。
+// 以前让管理员随手换频道，结果公告发到一个没人订阅的频道上 = 谁都收不到，这条删掉。
+const PUSH_TOPIC = 'ys-bistu-all';
 
 let cfg = { ...DEFAULT_CFG };
 let list = [];          // 正在编辑的公告（未归一化，原样保留字段）
@@ -51,7 +55,6 @@ function fillCfgInputs() {
   $id('cfgBranch').value = cfg.branch;
   $id('cfgPath').value = cfg.path;
   $id('cfgToken').value = cfg.token;
-  $id('cfgTopic').value = cfg.topic;
   $id('manualPath').textContent = cfg.path;
 }
 
@@ -60,7 +63,6 @@ function readCfgInputs() {
   cfg.branch = $id('cfgBranch').value.trim() || 'main';
   cfg.path = $id('cfgPath').value.trim() || 'data/announcements.json';
   cfg.token = $id('cfgToken').value.trim();
-  cfg.topic = $id('cfgTopic').value.trim();
   saveCfg();
 }
 
@@ -384,15 +386,13 @@ async function doPublish() {
     const note = list.length ? `已提交 ${list.length} 条公告。` : '已提交（公告列表为空）。';
     setHint('pubHint', `${note}GitHub Pages 一般 1 分钟内生效。`, 'ok');
     // 提交成功顺手发个门铃，同学那边不用等轮询
-    if (cfg.topic && list.length) {
+    if (list.length) {
       try {
         await pushNotify();
-        setHint('pubHint', `${note}门铃已发出，GitHub Pages 一般 1 分钟内生效。`, 'ok');
+        setHint('pubHint', `${note}门铃已发到公共频道 ${PUSH_TOPIC}，GitHub Pages 一般 1 分钟内生效。`, 'ok');
       } catch (e) {
         setHint('pubHint', `${note}但推送失败（${e.message}）—— 不影响公告本身，同学打开应用仍能看到。`, '');
       }
-    } else if (!cfg.topic) {
-      setHint('pubHint', `${note}但没有设推送频道 —— 同学不会收到提醒，得等他们自己打开应用才看得到。`, '');
     }
   } catch (e) {
     setHint('pubHint', e.message, 'bad');
@@ -418,8 +418,7 @@ async function doPublish() {
  * 而连接建立才有 `event: open` —— 所以应用端用 addEventListener('message') 才是对的。
  */
 async function pushNotify() {
-  if (!cfg.topic) throw new Error('还没设推送频道');
-  const res = await fetch(ntfyPublishUrl(cfg.topic), {
+  const res = await fetch(ntfyPublishUrl(PUSH_TOPIC), {
     method: 'PUT',
     headers: { Priority: '3', Tags: 'loudspeaker' }, // 全是 ASCII
     body: 'new',
@@ -492,12 +491,7 @@ function renderShare() {
     setHint('shareHint', '这个页面是用 file:// 打开的，算不出站点地址。部署到 GitHub Pages 后再来看这段。', 'bad');
     return;
   }
-  if (!cfg.topic) {
-    $id('shareCode').value = '';
-    setHint('shareHint', '先填一个推送频道（或点「换一个随机频道」）。', 'bad');
-    return;
-  }
-  $id('shareCode').value = encodeAnnConfig({ url, topic: cfg.topic, name: '仰山课表公告' });
+  $id('shareCode').value = encodeAnnConfig({ url, topic: PUSH_TOPIC, name: '仰山课表公告' });
   setHint('shareHint', `公告地址：${url}`);
 }
 
@@ -517,12 +511,6 @@ function bind() {
   $id('btnPublish').addEventListener('click', doPublish);
   $id('btnNotify').addEventListener('click', doTestPush);
 
-  $id('btnTopic').addEventListener('click', () => {
-    $id('cfgTopic').value = randomTopic('ys-bistu');
-    readCfgInputs();
-    renderShare();
-    setHint('shareHint', '已换新频道 —— 记得把新的分享码重新发到班里；旧频道里的同学会收不到推送（但公告照样能刷到）。', 'ok');
-  });
   $id('btnTestPush').addEventListener('click', doTestPush);
   $id('btnCopyCode').addEventListener('click', async () => {
     const code = $id('shareCode').value;
@@ -553,7 +541,7 @@ function bind() {
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   });
 
-  for (const id of ['cfgRepo', 'cfgBranch', 'cfgPath', 'cfgToken', 'cfgTopic']) {
+  for (const id of ['cfgRepo', 'cfgBranch', 'cfgPath', 'cfgToken']) {
     $id(id).addEventListener('change', () => {
       readCfgInputs();
       $id('manualPath').textContent = cfg.path;

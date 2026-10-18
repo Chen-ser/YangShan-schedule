@@ -2690,11 +2690,38 @@ t('管理页：没点「加入列表」也不会再提交一条空公告', () =>
   ok(pub.indexOf('!list.length') < pub.indexOf('writeRemote'),
     '空列表检查必须发生在提交之前');
   ok(pub.includes('pushNotify()'), '发布成功后要顺手敲一声门铃');
-  ok(pub.includes('但没有设推送频道'),
-    '没设频道时必须明说「同学收不到提醒」，不然又是一次「发了但没人知道」');
+  ok(!pub.includes('cfgTopic'), '管理页不该再让管理员挑频道 —— 挑错了就是「发了但没人收到」');
   // 2026-10-18 真的踩过：连提交两条「更新 0 条」，公告没发出去、手机也没收到推送
   const live = JSON.parse(readFileSync(join(ROOT, 'data/announcements.json'), 'utf8'));
   ok(Array.isArray(live.announcements), '仓库里的公告文件必须是 { announcements: [...] } 结构');
+});
+
+t('公告走全体推送：全校一条公共频道，管理页和应用端必须是同一个名字', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  const admin = readFileSync(join(ROOT, 'web/admin/admin.js'), 'utf8');
+  const adminTpl = readFileSync(join(ROOT, 'web/admin/template.html'), 'utf8');
+
+  const appTopic = /const PUBLIC_PUSH_TOPIC = '([^']+)'/.exec(app)?.[1];
+  const adminTopic = /const PUSH_TOPIC = '([^']+)'/.exec(admin)?.[1];
+  ok(appTopic === 'ys-bistu-all', `应用端公共频道应为 ys-bistu-all（实际 ${appTopic}）`);
+  ok(appTopic === adminTopic,
+    `管理页与应用端的频道名必须逐字相同，否则公告发到 A、同学订在 B —— 实际 ${adminTopic} vs ${appTopic}`);
+
+  ok(!/id="cfgTopic"/.test(adminTpl), '管理页不能再有「推送频道」输入框');
+  ok(!/btnTopic/.test(adminTpl), '不能再有「换一个随机频道」按钮');
+  ok(adminTpl.includes('ys-bistu-all'), '要把公共频道名写在页面上，出问题时一眼能对');
+
+  // 应用端：任何来源（含老分享码里带着别的 topic）都必须归一到公共频道
+  ok(/const topic = PUBLIC_PUSH_TOPIC;/.test(app),
+    'normalizeAnnouncementSource 必须把 topic 强制成公共频道，否则老分享码还能把人订到别的频道');
+  ok(!/topic === DEFAULT_ANNOUNCEMENT_SOURCE\.topic/.test(app),
+    '判重不能拿 topic 比 —— 全员同频道时那样会把所有自定义源都当成内置源挡掉');
+
+  // 原生侧：多个源共用一个频道时，不能开多条 SSE 连接（同一条公告会弹两次通知）
+  const annPush = readFileSync(join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/AnnPush.kt'), 'utf8');
+  ok(annPush.includes('dedupeByTopic'), '安卓侧必须按频道去重，否则同一频道会被订阅多次、通知弹两遍');
+  ok(/fun sources\(ctx: Context\): List<Source> = dedupeByTopic\(rawSources\(ctx\)\)/.test(annPush),
+    'sources() 要统一走去重，别绕过它');
 });
 
 t('管理页：草稿不会因为刷新页面或点「测试连接并读取」而丢', () => {

@@ -10,10 +10,14 @@
 
 const VERSION = '__VERSION__';
 const LS_KEY = 'yangshan-schedule/v1';
+// 全体推送用的公共频道：没有「每个管理员自己发一个频道」这回事了 ——
+// 全校只有这一条 ntfy 频道，谁装了这个 App 就都订在它上面，公告一响所有人同时收到。
+// 管理页里不再让管理员填频道，就是为了防「公告发到一个没人订阅的频道」这种事故。
+const PUBLIC_PUSH_TOPIC = 'ys-bistu-all';
 const DEFAULT_ANNOUNCEMENT_SOURCE = Object.freeze({
   id: 'default-bistu-all',
   url: 'https://chen-ser.github.io/YangShan-schedule/data/announcements.json',
-  topic: 'ys-bistu-all',
+  topic: PUBLIC_PUSH_TOPIC,
   name: '北京信息科技大学公告',
 });
 const DEFAULT_SETTINGS = {
@@ -56,13 +60,14 @@ function randomAnnouncementSourceId() {
 
 function normalizeAnnouncementSource(raw) {
   const url = String(raw?.url ?? '').trim();
-  const topic = String(raw?.topic ?? '').trim();
-  if (!url && !topic) return null;
-  if (url && !/^https?:\/\//i.test(url)) return null;
-  if (topic && !TOPIC_RE.test(topic)) return null;
   if (!url) return null;
-  const isDefault = url === DEFAULT_ANNOUNCEMENT_SOURCE.url || topic === DEFAULT_ANNOUNCEMENT_SOURCE.topic;
-  if (isDefault) return null;
+  if (!/^https?:\/\//i.test(url)) return null;
+  // 不再由用户/分享码指定频道：全体推送就是全校同一条公共频道。
+  // 老的分享码里带着 topic 也照样吃下来，但一律归一到 PUBLIC_PUSH_TOPIC，
+  // 免得同一个源在两台手机上订到不同频道、一台收得到一台收不到。
+  const topic = PUBLIC_PUSH_TOPIC;
+  // 只按 url 判重：topic 现在全员相同，再拿它比会把所有源都当成内置源挡掉。
+  if (url === DEFAULT_ANNOUNCEMENT_SOURCE.url) return null;
   return {
     id: String(raw?.id || randomAnnouncementSourceId()),
     url,
@@ -2396,7 +2401,7 @@ function renderAnnSources() {
     box.append(h('div', { class: 'ann-source-row' },
       h('div', { class: 'ann-source-info' },
         h('b', {}, sourceLabel(source)),
-        h('span', { class: 'muted small' }, source.topic ? `频道 ${source.topic}` : source.url),
+        h('span', { class: 'muted small' }, source.url),
       ),
       h('button', {
         class: 'danger-btn',

@@ -41,7 +41,24 @@ object AnnPush {
     private fun prefs(ctx: Context) =
         ctx.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
-    fun sources(ctx: Context): List<Source> {
+    fun sources(ctx: Context): List<Source> = dedupeByTopic(rawSources(ctx))
+
+    /**
+     * 全体推送之后所有公告源共用同一条 ntfy 频道。
+     * 同一个频道开两条 SSE 连接只会让同一条公告弹两次通知，
+     * 所以按频道去重：每个频道只留第一条（第一条的 url 足够用来回源拉正文）。
+     */
+    private fun dedupeByTopic(list: List<Source>): List<Source> {
+        val seen = HashSet<String>()
+        val out = ArrayList<Source>(list.size)
+        for (s in list) {
+            if (!seen.add(s.topic)) continue
+            out.add(s)
+        }
+        return out
+    }
+
+    private fun rawSources(ctx: Context): List<Source> {
         val p = prefs(ctx)
         val raw = p.getString(K_SOURCES, "").orEmpty()
         if (raw.isNotBlank()) {
