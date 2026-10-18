@@ -119,6 +119,57 @@ t('课程编辑会同步节次与具体时间，并记录两类字段', () => {
   ok(app.includes('fields.start ||') && app.includes('fields.end ||'), '修改记录必须展示周课表时间字段');
 });
 
+t('编辑当前课表不会再走外部刷新覆盖路径', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  ok(app.includes('function applyEditedPack(pack)'), '必须有当前课表专用保存路径');
+  ok(app.includes('opts.editCurrent ? applyEditedPack(pack) : applyPack(pack)'), '编辑器保存必须走专用路径');
+  ok(app.includes('editCurrent: true'), '编辑课表入口必须显式标记当前课表编辑');
+  ok(app.includes('hydrateEditedPack(incoming, before)'), '编辑结果必须和保存前课表配对');
+  ok(app.includes('state.scheduleChanges = mergeTermChanges([...weekChanges, ...termChanges])'), '编辑后必须重建修改记录');
+  ok(app.includes('__deleted: true'), '清空课程必须记录为删除，而不是被刷新恢复');
+});
+
+t('删除课程的记录必须写明删的是哪门课', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  ok(app.includes("courseName: original.courseName || original.course || ''"), '删除记录必须带上课程名');
+  ok(app.includes('`${where} · 已删除`'), '修改记录标题必须标出「已删除」');
+  ok(app.includes("fields.__deleted ? '这门课已从课表里删掉'"), '没有课程名时也要说明这是删除');
+});
+
+t('「N 条修改找不到了」只该统计总课表修改', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  const fn = app.slice(app.indexOf('function scheduleChangeStats'), app.indexOf('function applyScheduleChanges'));
+  ok(fn.includes("if (change?.scope !== 'term') continue;"), '周课表修改不参与统计');
+  ok(fn.includes('total += 1;'), '总数必须只累加参与统计的记录');
+  ok(!fn.includes('total: (changes || []).length'), '不能把周课表修改算进总数');
+});
+
+t('安卓状态副本要节流，不能每次存档都整份落盘', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  ok(app.includes('function scheduleShellPersist'), '必须有排队函数');
+  ok(app.includes('SHELL_PERSIST_DELAY_MS = 600'), '必须有明确的合并窗口');
+  ok(app.includes("shell.name !== 'android'"), '只有实现了 persistState 的安卓壳才发');
+  ok(app.includes("globalThis.addEventListener('pagehide', flushShellPersist)"), '切走页面必须立刻冲刷');
+  ok(!/globalThis\.YangShanShell\.persistState\(json, updatedAt\)/.test(app), 'saveState 不能直接落盘');
+});
+
+t('安卓启动时不再无条件读整份状态', () => {
+  const kt = readFileSync(join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/MainActivity.kt'), 'utf8');
+  const probe = kt.slice(kt.indexOf('private fun restoreIfNeeded()'), kt.indexOf('private fun restoreFullState'));
+  ok(probe.includes('Store.stateAt(this)'), '必须先读时间戳');
+  ok(probe.includes("localStorage.getItem('yangshan-schedule/v1/updatedAt')"), '必须问本地那份有多新');
+  ok(!probe.includes('Store.state(this)'), '探测阶段不许读状态文件');
+  const full = kt.slice(kt.indexOf('private fun restoreFullState'), kt.indexOf('private fun restoreRawCapture'));
+  ok(full.includes('Store.state(this)'), '确实要恢复时才读文件');
+  ok(full.includes('Thread {'), '读文件必须离开主线程');
+});
+
+t('Windows 壳上报的版本号不许手写', () => {
+  const cs = readFileSync(join(ROOT, 'shells/windows/MainForm.cs'), 'utf8');
+  ok(!/version = "0\.\d+\.\d+"/.test(cs), '不能手写版本号');
+  ok(cs.includes('GetName().Version?.ToString(3)'), '版本号必须来自程序集元数据');
+});
+
 t('课程块按实际时间在节次格内偏移显示', () => {
   const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
   ok(app.includes('function courseVisualInsets'), '必须有按分钟计算课程块偏移的函数');
@@ -312,7 +363,7 @@ t('安卓壳所有异步回包都带请求 id，并恢复最新课表', () => {
   ok(src.includes('.put("ok", true)'), '安卓状态回包必须带成功标志');
   ok(src.includes('.put("pack", status)'), '安卓状态回包必须把状态放进 pack 字段');
   ok(src.includes('localStorage.getItem'), '安卓恢复应比较网页本地更新时间');
-  ok(src.includes('local-newer'), '用户较新的本地导入不能被旧抓取结果覆盖');
+  ok(src.includes('stateAt > localAt') && src.includes('rawAt > localAt'), '只有壳里的副本比本地新时才允许覆盖 —— 旧抓取结果不能盖掉用户较新的导入');
   ok(!/if\s*\(YangShan\.hasSchedule\(\)\)\s*return 'has'/.test(src), '安卓启动时不能跳过 Store 中的最新课表');
 });
 
@@ -1929,6 +1980,22 @@ t('officefile: 周历至少 20 周，课表里有更靠后的周次就跟着加�
   eq(OF.maxWeekUsed(GRID_XLSX.courses, GRID_XLSX.unscheduled), 17);
   eq(OF.makeTermWeeks('2026-09-07', Math.max(20, OF.maxWeekUsed(GRID_XLSX.courses, GRID_XLSX.unscheduled))).length, 20);
   eq(OF.makeTermWeeks('2026-09-07', 25).length, 25);
+});
+
+t('officefile: 导入界面明确填写的第 1 周日期优先于当前日期推算', () => {
+  const pack = OF.packFromGrid(GRID_XLSX, {
+    anchorWeek: 1,
+    today: '2026-10-18',
+    termStartDate: '2026-09-07',
+  });
+  eq(pack.termWeeks[0].startDate, '2026-09-07');
+  eq(pack.events[0].date, '2026-09-08');
+  const nonMonday = OF.packFromGrid(GRID_XLSX, {
+    anchorWeek: 1,
+    today: '2026-10-18',
+    termStartDate: '2026-09-09',
+  });
+  eq(nonMonday.termWeeks[0].startDate, '2026-09-07');
 });
 
 t('★★ officefile: 只补一个「第几周」，文件导入就能复现接口抓取的全部 137 节课', () => {

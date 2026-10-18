@@ -5,7 +5,9 @@
  *   globalThis.YangShanShell = {
  *     name: 'windows' | 'android', version: 1,
  *     login(username, password), refresh(), status(), forget(),
- *     notify(title, body), openExternal(url)
+ *     notify(title, body), requestBackgroundAccess(), openAppSettings(),
+ *     persistState(json, updatedAt),
+ *     openExternal(url)
  *   }
  * 内核在用户点「输入教务账号密码」的那一刻才读它：
  *   读得到 → 真的出现登录框；读不到 → 走降级说明页（讲清楚浏览器为什么做不到）。
@@ -75,6 +77,11 @@
     forget: function () { return call('forget'); },
     notify: function (title, body) { post({ cmd: 'notify', title: title, body: body }); },
     requestNotifications: function () { return call('requestNotifications'); },
+    requestBackgroundAccess: function () { return call('requestBackgroundAccess'); },
+    openAppSettings: function () { return call('openAppSettings'); },
+    persistState: function (json, updatedAt) {
+      post({ cmd: 'persistState', json: String(json || ''), updatedAt: Number(updatedAt) || Date.now() });
+    },
     openExternal: function (url) { post({ cmd: 'open', url: url }); },
     // 把公告频道交给原生侧，让它在 App 关掉之后也能收。
     // 单向、不回包：前台服务是异步起来的，此刻回“成功”是不诚实 ——

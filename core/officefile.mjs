@@ -831,7 +831,7 @@ export function maxWeekUsed(courses, unscheduled) {
  * 因此同一门课从文件导入和从教务系统抓取，在日历里是**同一条事件**（原地更新），
  * 不会出现「导入两次、一学期两份」。
  *
- * opts: { anchorWeek, today, termWeeks, termCode }
+ * opts: { anchorWeek, today, termStartDate, termWeeks, termCode }
  */
 export function packFromGrid(grid, opts = {}) {
   const courses = grid?.courses ?? [];
@@ -841,7 +841,14 @@ export function packFromGrid(grid, opts = {}) {
   let termWeeks = Array.isArray(opts.termWeeks) ? normalizeTermWeeks(opts.termWeeks) : [];
   if (!termWeeks.length) {
     const anchorWeek = Number(opts.anchorWeek) || 1;
-    const start = termStartFromWeek(anchorWeek, opts.today ?? todayISO());
+    const explicitStartRaw = typeof opts.termStartDate === 'string' &&
+      /^\d{4}-\d{2}-\d{2}$/.test(opts.termStartDate)
+      ? opts.termStartDate
+      : '';
+    const explicitStart = explicitStartRaw
+      ? addDays(explicitStartRaw, -(weekdayOf(explicitStartRaw) - 1))
+      : '';
+    const start = explicitStart || termStartFromWeek(anchorWeek, opts.today ?? todayISO());
     // 至少 20 周（多数专业的教学周数），课表里有更靠后的周次就照它加长
     termWeeks = makeTermWeeks(start, Math.max(20, maxWeekUsed(courses, unsched)));
   }

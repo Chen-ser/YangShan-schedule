@@ -204,7 +204,9 @@ internal sealed class MainForm : Form
                     var payload = JsonSerializer.Serialize(new
                     {
                         name = "windows",
-                        version = "0.1.9",
+                        // 从程序集元数据取，别再手写 —— 这里写死过 "0.1.9"，而当时
+                        // 全局版本已经是 0.1.12：一旦有谁开始用这个字段就会拿到错值。
+                        version = typeof(MainForm).Assembly.GetName().Version?.ToString(3) ?? "",
                         hasSchedule,
                         remembered = stored is not null,
                         username = stored?.User ?? _shell.Settings.Username,

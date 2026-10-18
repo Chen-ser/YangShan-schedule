@@ -41,7 +41,7 @@ Set-StrictMode -Version Latest
 $AppName    = [string]([char]0x4EF0 + [char]0x5C71 + [char]0x8BFE + [char]0x8868)
 $AppDesc    = $AppName + ' - Beijing Information Science and Technology University class schedule'
 $Publisher  = 'YangShan Schedule'
-$Version    = '0.1.0'
+$Version    = '0.1.12'
 $RegKey     = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\YangShanSchedule'
 
 function Step($n, $text) { Write-Host ''; Write-Host "[$n] $text" -ForegroundColor Cyan }

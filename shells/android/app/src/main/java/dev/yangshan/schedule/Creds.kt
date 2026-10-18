@@ -77,6 +77,8 @@ object Store {
     private const val FILE = "yangshan_state"
     private const val K_RAW = "raw"
     private const val K_RAW_AT = "rawAt"
+    private const val STATE_FILE = "yangshan-state.json"
+    private const val STATE_TMP = "yangshan-state.json.tmp"
 
     private fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -90,7 +92,33 @@ object Store {
 
     fun rawAt(ctx: Context): Long = prefs(ctx).getLong(K_RAW_AT, 0L)
 
+    /** 网页内核完整状态的持久副本，放 filesDir 而不是 cacheDir。 */
+    fun stateFile(ctx: Context): java.io.File =
+        java.io.File(ctx.applicationContext.filesDir, STATE_FILE)
+
+    @Synchronized
+    fun saveState(ctx: Context, json: String, updatedAt: Long) {
+        if (json.isBlank()) return
+        val dir = ctx.applicationContext.filesDir
+        val tmp = java.io.File(dir, STATE_TMP)
+        val target = java.io.File(dir, STATE_FILE)
+        tmp.writeText(json, Charsets.UTF_8)
+        if (!tmp.renameTo(target)) {
+            target.writeText(json, Charsets.UTF_8)
+            tmp.delete()
+        }
+        prefs(ctx).edit().putLong("stateAt", updatedAt).apply()
+    }
+
+    fun stateAt(ctx: Context): Long = prefs(ctx).getLong("stateAt", 0L)
+
+    @Synchronized
+    fun state(ctx: Context): String? =
+        runCatching { stateFile(ctx).takeIf { it.isFile }?.readText(Charsets.UTF_8) }.getOrNull()
+
     fun clear(ctx: Context) {
         prefs(ctx).edit().clear().apply()
+        stateFile(ctx).delete()
+        java.io.File(ctx.applicationContext.filesDir, STATE_TMP).delete()
     }
 }

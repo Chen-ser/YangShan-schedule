@@ -5,6 +5,8 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.provider.OpenableColumns
 import android.view.ViewGroup
 import android.webkit.WebResourceRequest
@@ -395,6 +397,73 @@ class MainActivity : Activity(), ShellBridge.Host {
         }
     }
 
+    override fun onRequestBackgroundAccess(id: String) {
+        runOnUiThread {
+            val opened = try {
+                val pm = getSystemService(POWER_SERVICE) as PowerManager
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+                    !pm.isIgnoringBatteryOptimizations(packageName)
+                ) {
+                    startActivity(
+                        Intent(
+                            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                            Uri.parse("package:$packageName"),
+                        ),
+                    )
+                    true
+                } else {
+                    false
+                }
+            } catch (_: Exception) {
+                false
+            }
+            if (!opened) {
+                try {
+                    startActivity(
+                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                            .setData(Uri.parse("package:$packageName")),
+                    )
+                } catch (_: Exception) {
+                    // 某些定制系统没有应用详情页，仍给网页一个可处理的成功回包。
+                }
+            }
+            reply(
+                JSONObject()
+                    .put("id", id)
+                    .put("ok", true)
+                    .put(
+                        "pack",
+                        JSONObject().put(
+                            "message",
+                            if (opened) "请在系统页面允许忽略电池优化；若仍不刷新，再到应用详情开启通知和后台运行。"
+                            else "请在系统页面开启通知和允许后台运行。",
+                        ),
+                    ),
+            )
+        }
+    }
+
+    override fun onOpenAppSettings(id: String) {
+        runOnUiThread {
+            try {
+                startActivity(
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                        .setData(Uri.parse("package:$packageName")),
+                )
+                reply(JSONObject().put("id", id).put("ok", true).put("pack", JSONObject()))
+            } catch (e: Exception) {
+                replyError(id, "无法打开应用权限设置：${e.message ?: "未知错误"}")
+            }
+        }
+    }
+
+    override fun onPersistState(json: String?, updatedAt: Long) {
+        if (json.isNullOrBlank()) return
+        Thread {
+            runCatching { Store.saveState(this, json, updatedAt) }
+        }.start()
+    }
+
     override fun onOpen(url: String?) {
         if (!url.isNullOrBlank()) open(url)
     }
@@ -439,21 +508,58 @@ class MainActivity : Activity(), ShellBridge.Host {
      * 但换手机、清数据、重装之后 localStorage 会空 —— 那时用 Store 里的备份把它填回去。
      */
     private fun restoreIfNeeded() {
-        val raw = Store.raw(this) ?: return
+        val stateAt = Store.stateAt(this)
         val rawAt = Store.rawAt(this)
-        val js = """
-            (function () {
-              if (!globalThis.YangShan) return 'no-bridge';
-              var localAt = Number(localStorage.getItem('yangshan-schedule/v1/updatedAt') || 0);
-              if (YangShan.hasSchedule() && localAt >= ${rawAt} && ${rawAt} > 0) return 'local-newer';
-              try {
-                YangShan.importText(${JSONObject.quote(raw)}, { preserveChanges: true });
-                return 'restored';
-              }
-              catch (e) { return 'error: ' + e.message; }
-            })()
-        """.trimIndent()
-        web.evaluateJavascript(js, null)
+        if (stateAt <= 0L && rawAt <= 0L) return
+        // 先只问一个问题：本地那份是什么时候写的。绝大多数启动本地都是最新的，
+        // 那就完全不该去读几 MB 的状态文件，更不该把它拼进一段 JS 注入进来 ——
+        // 之前每次 onPageFinished 都无条件做这件事。
+        web.evaluateJavascript(
+            "(function(){return String(Number(localStorage.getItem('yangshan-schedule/v1/updatedAt')||0));})()",
+        ) { probe ->
+            val localAt = probe?.trim()?.trim('"')?.toLongOrNull() ?: 0L
+            when {
+                stateAt > localAt -> restoreFullState(stateAt)
+                rawAt > localAt -> restoreRawCapture()
+            }
+        }
+    }
+
+    /** 读文件 + 拼脚本都放后台线程：状态可能有几 MB，JSON 转义在主线程上能明显卡顿。 */
+    private fun restoreFullState(stateAt: Long) {
+        Thread {
+            val full = Store.state(this)
+            if (full.isNullOrBlank()) return@Thread
+            val js = """
+                (function () {
+                  try {
+                    localStorage.setItem('yangshan-schedule/v1', ${JSONObject.quote(full)});
+                    localStorage.setItem('yangshan-schedule/v1/updatedAt', "$stateAt");
+                    location.reload();
+                    return 'full-restored';
+                  } catch (e) { return 'full-restore-error: ' + e.message; }
+                })()
+            """.trimIndent()
+            runOnUiThread { web.evaluateJavascript(js, null) }
+        }.start()
+    }
+
+    /** 只有「没有完整副本、但有上次抓取的原始课表」这条老路才会走到这里。 */
+    private fun restoreRawCapture() {
+        Thread {
+            val raw = Store.raw(this)
+            if (raw.isNullOrBlank()) return@Thread
+            val js = """
+                (function () {
+                  if (!globalThis.YangShan) return 'no-bridge';
+                  try {
+                    YangShan.importText(${JSONObject.quote(raw)}, { preserveChanges: true });
+                    return 'restored';
+                  } catch (e) { return 'error: ' + e.message; }
+                })()
+            """.trimIndent()
+            runOnUiThread { web.evaluateJavascript(js, null) }
+        }.start()
     }
 
     // ── 回包 ────────────────────────────────────────────────────────────────

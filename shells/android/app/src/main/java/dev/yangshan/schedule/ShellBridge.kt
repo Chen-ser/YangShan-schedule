@@ -24,6 +24,9 @@ class ShellBridge(private val host: Host) {
         fun onForget(id: String)
         fun onNotify(title: String?, body: String?)
         fun onRequestNotifications(id: String)
+        fun onRequestBackgroundAccess(id: String)
+        fun onOpenAppSettings(id: String)
+        fun onPersistState(json: String?, updatedAt: Long)
         fun onOpen(url: String?)
         fun onAnnPush(sourcesJson: String?, base: String?)
     }
@@ -47,6 +50,12 @@ class ShellBridge(private val host: Host) {
             "forget" -> host.onForget(id)
             "notify" -> host.onNotify(m.stringOrNull("title"), m.stringOrNull("body"))
             "requestNotifications" -> host.onRequestNotifications(id)
+            "requestBackgroundAccess" -> host.onRequestBackgroundAccess(id)
+            "openAppSettings" -> host.onOpenAppSettings(id)
+            "persistState" -> host.onPersistState(
+                m.stringOrNull("json"),
+                m.optLong("updatedAt", System.currentTimeMillis()),
+            )
             "open" -> host.onOpen(m.stringOrNull("url"))
             // 没有回包：这是单向的设置下发。成功与否由 status 的 annPush 字段反映。
             "annpush" -> host.onAnnPush(

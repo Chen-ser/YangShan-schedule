@@ -393,14 +393,20 @@ function findChangeTargetIndex(list, termCode, courseId) {
 // 这次导入到底有几条修改记录还能落到新课表上。
 // 有它才能说实话：界面上写「已保留 N 条」，其中几条其实是死的。
 function scheduleChangeStats(base, changes = []) {
-  if (!base) return { total: (changes || []).length, applied: 0 };
+  const all = changes || [];
+  if (!base) return { total: all.length, applied: 0 };
   const pack = ensureEditableEntryIds(normalizeSchedulePack(base));
+  let total = 0;
   let applied = 0;
-  for (const change of changes || []) {
+  for (const change of all) {
+    // 只统计总课表修改：周课表修改是原样保留的，不依赖「这门课还在不在」，
+    // 算进 total 就会让「N 条对应的课已经找不到了」在每次同步后凭空出现。
     if (change?.scope !== 'term') continue;
+    total += 1;
+    // 删除记录同样按「base 里还找得到这门课」判断：找得到就说明这次删除照样生效。
     if (findChangeTargetIndex(pack.arrangedList, pack.termCode, change.courseId) >= 0) applied += 1;
   }
-  return { total: (changes || []).length, applied };
+  return { total, applied };
 }
 
 function applyScheduleChanges(base, changes = []) {
@@ -411,6 +417,10 @@ function applyScheduleChanges(base, changes = []) {
   for (const change of termChanges) {
     const i = findChangeTargetIndex(list, pack.termCode, change.courseId);
     if (i < 0) continue;
+    if (change.fields?.__deleted) {
+      list.splice(i, 1);
+      continue;
+    }
     let c = { ...list[i], ...(change.fields || {}) };
     if (Object.prototype.hasOwnProperty.call(change.fields || {}, 'teacher')) c = withTeacher(c, change.fields.teacher);
     list[i] = c;
@@ -432,8 +442,190 @@ function rebuildSchedule() {
   state.schedule = applyScheduleChanges(state.scheduleBase, state.scheduleChanges);
 }
 
+function courseMatchScore(a, b) {
+  const codeA = String(a?.courseCode || '').trim();
+  const codeB = String(b?.courseCode || '').trim();
+  const nameA = String(a?.courseName || a?.course || '').trim();
+  const nameB = String(b?.courseName || b?.course || '').trim();
+  const weeksA = String(a?.week || a?.weekBitmap || '').trim();
+  const weeksB = String(b?.week || b?.weekBitmap || '').trim();
+  let score = 0;
+  if (codeA && codeA === codeB) score += 100;
+  if (nameA && nameA === nameB) score += 50;
+  if (weeksA && weeksA === weeksB) score += 30;
+  if (Number(a?.dayOfWeek) === Number(b?.dayOfWeek)) score += 10;
+  if (Number(a?.beginSection) === Number(b?.beginSection)) score += 5;
+  if (Number(a?.endSection) === Number(b?.endSection)) score += 5;
+  return score;
+}
+
+/**
+ * 网格编辑器只保留用户能看见的字段，解析回来时 beginTime、teacher 等字段
+ * 可能为空。把它和编辑前的有效课表按课程代码/名称/周次配对，补回这些字段，
+ * 同时把课表条目标识带回来。这样编辑课程名称、地点或节次时，不会误清空提醒
+ * 所需的具体时间，也不会因为位置变化而创建一条新课程。
+ */
+function hydrateEditedPack(incoming, before) {
+  const source = before?.arrangedList ?? [];
+  const used = new Set();
+  const list = (incoming?.arrangedList ?? []).map((course, index) => {
+    let best = -1;
+    // 0 分不算配对：否则「一门完全对不上的课」会抢走第一个还没被占用的候选，
+    // 下面按网格顺序兜底的 best < 0 分支就永远走不到了。
+    let bestScore = 0;
+    source.forEach((candidate, candidateIndex) => {
+      if (used.has(candidateIndex)) return;
+      const score = courseMatchScore(course, candidate);
+      if (score > bestScore) {
+        best = candidateIndex;
+        bestScore = score;
+      }
+    });
+    // 没有代码的课程也能编辑：保持网格顺序作为最后的配对依据。
+    if (best < 0 && source[index] && !used.has(index)) best = index;
+    const previous = best >= 0 ? source[best] : null;
+    if (best >= 0) used.add(best);
+    if (!previous) return course;
+
+    const next = {
+      ...previous,
+      ...course,
+      __ysEntryId: previous.__ysEntryId || course.__ysEntryId,
+    };
+    if (!course.beginTime) {
+      const section = Number(course.beginSection) || Number(previous.beginSection) || 1;
+      next.beginTime = Number(course.beginSection) !== Number(previous.beginSection)
+        ? (SECTION_TIMES[section - 1]?.start || previous.beginTime || '')
+        : (previous.beginTime || '');
+    }
+    if (!course.endTime) {
+      const section = Number(course.endSection) || Number(previous.endSection) || Number(course.beginSection) || 1;
+      next.endTime = Number(course.endSection) !== Number(previous.endSection)
+        ? (SECTION_TIMES[section - 1]?.end || previous.endTime || '')
+        : (previous.endTime || '');
+    }
+    if (!course.weeksAndTeachers) next.weeksAndTeachers = previous.weeksAndTeachers || '';
+    if (!course.placeName) next.placeName = previous.placeName || '';
+    if (!course.teachingTarget) next.teachingTarget = previous.teachingTarget || '';
+    return next;
+  });
+  return ensureEditableEntryIds(normalizeSchedulePack({
+    ...incoming,
+    arrangedList: list,
+    events: null,
+  }));
+}
+
+function editableFieldsOf(course, base) {
+  const fields = {};
+  const name = course?.courseName ?? course?.course ?? '';
+  const baseName = base?.courseName ?? base?.course ?? '';
+  if (name !== baseName) fields.courseName = name;
+  for (const key of ['dayOfWeek', 'beginSection', 'endSection', 'beginTime', 'endTime', 'placeName']) {
+    if (String(course?.[key] ?? '') !== String(base?.[key] ?? '')) fields[key] = course?.[key] ?? '';
+  }
+  const teacher = teacherOf(course);
+  const baseTeacher = teacherOf(base);
+  if (teacher !== baseTeacher) fields.teacher = teacher;
+  return fields;
+}
+
+function changeKey(change) {
+  return change?.scope === 'week'
+    ? `${change.scope}:${change.eventId}`
+    : `${change?.scope || 'term'}:${change?.courseId}`;
+}
+
+function mergeTermChanges(changes) {
+  const out = [];
+  const indexes = new Map();
+  for (const change of changes || []) {
+    const key = changeKey(change);
+    if (!key || key.endsWith(':undefined')) continue;
+    const index = indexes.get(key);
+    if (index == null) {
+      indexes.set(key, out.length);
+      out.push(change);
+    } else {
+      out[index] = { ...out[index], ...change, fields: { ...out[index].fields, ...change.fields } };
+    }
+  }
+  return out;
+}
+
+/**
+ * “编辑课表”是本地编辑，不是一次新的教务系统导入。
+ * 旧实现把它送进 applyPack，遇到已有 scheduleChanges 时会再次弹出“保留修改”，
+ * 并用旧记录覆盖刚刚编辑的内容。这里直接把当前编辑结果折算成相对
+ * scheduleBase 的修改记录，再重建最终课表，避免覆盖和丢失。
+ */
+function applyEditedPack(pack) {
+  const incoming = ensureEditableEntryIds(normalizeSchedulePack(pack));
+  const base = ensureEditableEntryIds(normalizeSchedulePack(state.scheduleBase || state.schedule || incoming));
+  const before = state.schedule || applyScheduleChanges(base, state.scheduleChanges);
+  const hydrated = hydrateEditedPack(incoming, before);
+  const baseById = new Map((base.arrangedList || []).map((course) => [
+    courseIdentity(course, base.termCode),
+    course,
+  ]));
+  const termChanges = [];
+  const incomingIds = new Set();
+  for (const course of hydrated.arrangedList || []) {
+    const id = courseIdentity(course, base.termCode);
+    const original = baseById.get(id);
+    if (!original) continue;
+    incomingIds.add(id);
+    const fields = editableFieldsOf(course, original);
+    if (Object.keys(fields).length) termChanges.push({
+      scope: 'term',
+      courseId: id,
+      fields,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+  // 清空网格中的一门课就是删除这门课。删除也要成为记录，才能在下次
+  // 教务系统刷新后继续保持“本地没有这门课”，而不是被原始课表重新带回来。
+  // 记录里同时留下「删掉的是哪门课」—— 只有 courseId 的话，修改记录页
+  // 只能显示一句「已调整课程时间或其他信息」，用户根本认不出删了什么。
+  for (const original of base.arrangedList || []) {
+    const id = courseIdentity(original, base.termCode);
+    if (incomingIds.has(id)) continue;
+    termChanges.push({
+      scope: 'term',
+      courseId: id,
+      fields: {
+        __deleted: true,
+        courseName: original.courseName || original.course || '',
+        placeName: original.placeName || '',
+        dayOfWeek: original.dayOfWeek,
+        beginSection: original.beginSection,
+        endSection: original.endSection,
+        beginTime: original.beginTime || '',
+        endTime: original.endTime || '',
+      },
+      updatedAt: new Date().toISOString(),
+    });
+  }
+  // 周课表修改不属于“编辑总课表”，原样保留；总课表修改由这次编辑结果重算。
+  const weekChanges = (state.scheduleChanges || []).filter((x) => x.scope === 'week');
+  state.scheduleBase = base;
+  state.scheduleChanges = mergeTermChanges([...weekChanges, ...termChanges]);
+  rebuildSchedule();
+  ui.week = currentWeekNumber();
+  saveState();
+  renderAll();
+  return {
+    events: state.schedule?.events?.length ?? 0,
+    weeks: state.schedule?.termWeeks?.length ?? 0,
+    pending: false,
+    edited: true,
+  };
+}
+
 function changeLabel(change) {
-  return change.scope === 'week' ? `第 ${change.week} 周 · 周课表` : '总课表 · 全学期';
+  const where = change.scope === 'week' ? `第 ${change.week} 周 · 周课表` : '总课表 · 全学期';
+  // 删除也是一条修改记录，但必须在标题上就说清楚 —— 否则它看起来和「改了地点」没区别。
+  return change.fields?.__deleted ? `${where} · 已删除` : where;
 }
 
 function upsertChange(change) {
@@ -533,6 +725,50 @@ function trimStateForStorage(startChars = stateChars()) {
   return { droppedConversations, droppedImages };
 }
 
+/**
+ * 安卓壳的「完整状态副本」不能跟着每一次 saveState 立刻落盘。
+ *
+ * saveState() 有几十个调用点，其中字号滑块的 input 事件每移一档就存一次，而一份
+ * 状态上限 240 万字符（中文按 UTF-8 落盘能有几 MB）。每档都跨一次桥、再开一个线程
+ * 写 flash，等于拖一次滑块写几十份全量文件。这里攒 600ms 只落最新那份。
+ *
+ * 页面被切走 / 卸载时立刻冲刷，免得「刚存完就被系统杀进程」丢掉最后一次改动。
+ */
+const SHELL_PERSIST_DELAY_MS = 600;
+let shellPersistTimer = 0;
+let shellPersistPending = null;
+
+function flushShellPersist() {
+  if (shellPersistTimer) {
+    clearTimeout(shellPersistTimer);
+    shellPersistTimer = 0;
+  }
+  const pending = shellPersistPending;
+  shellPersistPending = null;
+  if (!pending) return;
+  try {
+    globalThis.YangShanShell.persistState(pending.json, pending.updatedAt);
+  } catch { /* 副本失败不影响网页本地保存 */ }
+}
+
+function scheduleShellPersist(json, updatedAt) {
+  const shell = globalThis.YangShanShell;
+  // 只有安卓壳真的实现了 persistState；Windows 壳的 switch 里没有这一支，
+  // 发过去会被静默丢掉，浏览器里更是连方法都没有。
+  if (!shell || shell.name !== 'android' || typeof shell.persistState !== 'function') return;
+  shellPersistPending = { json, updatedAt };
+  if (shellPersistTimer) clearTimeout(shellPersistTimer);
+  shellPersistTimer = setTimeout(flushShellPersist, SHELL_PERSIST_DELAY_MS);
+}
+
+if (typeof globalThis.addEventListener === 'function') {
+  globalThis.addEventListener('pagehide', flushShellPersist);
+  globalThis.addEventListener('beforeunload', flushShellPersist);
+  globalThis.document?.addEventListener?.('visibilitychange', () => {
+    if (globalThis.document.visibilityState === 'hidden') flushShellPersist();
+  });
+}
+
 function saveState() {
   // 只序列化一次。saveState() 在拖字号、勾待办时会被高频调用，
   // 而 state 可能有几 MB —— 先 stringify 一次拿长度，超了才重算。
@@ -556,7 +792,12 @@ function saveState() {
   }
   try {
     localStorage.setItem(LS_KEY, json);
-    localStorage.setItem(LS_KEY + '/updatedAt', String(Date.now()));
+    const updatedAt = Date.now();
+    localStorage.setItem(LS_KEY + '/updatedAt', String(updatedAt));
+    // 安卓壳把完整状态再落到 filesDir；系统清理 WebView/cache 时仍可恢复课表、
+    // 待办、公告和助手历史。只有安卓壳真的实现了它 —— Windows 壳收到会静默丢掉，
+    // 浏览器里更没有这个方法，所以这里先按壳名字挡一道，再谈要不要排队。
+    scheduleShellPersist(json, updatedAt);
   } catch (e) {
     // iOS 上 Safari 可能因为存储配额清理 localStorage，也会在无痕模式下直接抛错。
     // 说到这里就必须说清楚：这次没存上，刷新就没了 —— 不能只用一句"存储不可用"糊过去。
@@ -2542,15 +2783,15 @@ function importFromGrid(grid, anchorWeek, opts = {}) {
   const pack = normalizeSchedulePack(
     packFromGrid(grid, { anchorWeek, today: todayISO(), ...opts }),
   );
-  const r = applyPack(pack);
+  const r = opts.editCurrent ? applyEditedPack(pack) : applyPack(pack);
   const extra = pack.unscheduled?.length ? `，另有 ${pack.unscheduled.length} 门没排上课表` : '';
-  if (!r.pending) toast(`导入成功：${r.events} 节课${extra}`);
+  if (!r.pending) toast(r.edited ? `课表修改已保存，上课提醒已同步${extra}` : `导入成功：${r.events} 节课${extra}`);
   return r;
 }
 
 /** 一句人话概括这次解析出的内容，用于导入前的预览。 */
-function gridSummary(grid, anchorWeek) {
-  const pack = packFromGrid(grid, { anchorWeek, today: todayISO() });
+function gridSummary(grid, anchorWeek, termStartDate = '') {
+  const pack = packFromGrid(grid, { anchorWeek, termStartDate, today: todayISO() });
   const evs = pack.events;
   const parts = [];
   if (grid.termName) parts.push(grid.termName);
@@ -2654,10 +2895,16 @@ function weekAnchorRow(initialWeek) {
   };
   const fromDate = () => {
     if (!date.value) return;
-    const n = Math.floor(daysBetween(date.value, todayISO()) / 7) + 1;
+    const today = todayISO();
+    const todayMonday = addDays(today, -(weekdayOf(today) - 1));
+    const selectedMonday = addDays(date.value, -(weekdayOf(date.value) - 1));
+    const n = Math.floor(daysBetween(selectedMonday, todayMonday) / 7) + 1;
+    date.value = selectedMonday;
     week.value = String(Math.max(1, Math.min(30, n)));
   };
   week.addEventListener('input', fromWeek);
+  week.addEventListener('change', fromWeek);
+  date.addEventListener('input', fromDate);
   date.addEventListener('change', fromDate);
   fromWeek();
 
@@ -2691,7 +2938,8 @@ function modalImportFile() {
   const refresh = () => {
     if (!grid) return;
     anchor.node.hidden = false;
-    preview.replaceChildren(h('div', { class: 'notice' }, h('b', {}, gridSummary(grid, Number(anchor.week.value) || 1))));
+    preview.replaceChildren(h('div', { class: 'notice' },
+      h('b', {}, gridSummary(grid, Number(anchor.week.value) || 1, anchor.date.value))));
   };
 
   const load = async (f) => {
@@ -2741,7 +2989,9 @@ function modalImportFile() {
       class: 'primary-btn',
       onClick: () => {
         if (!grid) { toast('先选一个课表文件'); return false; }
-        importFromGrid(grid, Number(anchor.week.value) || 1);
+        importFromGrid(grid, Number(anchor.week.value) || 1, {
+          termStartDate: anchor.date.value,
+        });
         return true;
       },
     },
@@ -2824,6 +3074,7 @@ function modalImportShot() {
             '这是从截图里认出来的，已经铺进格子了。把错字改掉、认错的课清空，然后保存。')],
           rows,
           anchorWeek: Number(anchor.week.value) || 1,
+          packOpts: { termStartDate: anchor.date.value },
           submitLabel: '保存',
         });
       };
@@ -3046,7 +3297,11 @@ function openGridEditor(opts = {}) {
       class: 'primary-btn',
       onClick: () => {
         try {
-          importFromGrid(parse(), Number(anchor.week.value) || 1, opts.packOpts || {});
+        importFromGrid(parse(), Number(anchor.week.value) || 1, {
+          ...(opts.packOpts || {}),
+          termStartDate: anchor.date.value,
+          editCurrent: Boolean(opts.editCurrent),
+        });
           return true;
         } catch (e) {
           toast(e?.message || '解析失败');
@@ -3083,6 +3338,7 @@ function modalEditSchedule() {
     rows: built.rows,
     anchorWeek: currentWeekNumber() ?? 1,
     submitLabel: '保存',
+    editCurrent: true,
     packOpts: { termWeeks: pack.termWeeks, termCode: pack.termCode },
     carry: {
       studentCode: pack.studentCode,
@@ -3559,6 +3815,42 @@ function applySettings() {
 
 function bindSettings() {
   const st = () => state.settings;
+  const androidAccess = $('androidAccessCard');
+  const androidShell = globalThis.YangShanShell &&
+    globalThis.YangShanShell.name === 'android';
+  if (androidAccess) {
+    androidAccess.hidden = !androidShell;
+    const accessButton = $('btnAndroidAccess');
+    const appSettingsButton = $('btnAndroidAppSettings');
+    const accessStatus = $('androidAccessStatus');
+    if (accessButton && androidShell) {
+      accessButton.addEventListener('click', async () => {
+        const shell = globalThis.YangShanShell;
+        if (!shell || typeof shell.requestBackgroundAccess !== 'function') return;
+        try {
+          const result = await shell.requestBackgroundAccess();
+          if (accessStatus) accessStatus.textContent = result?.message || '已打开系统授权页面，请按页面提示允许权限。';
+          toast('已打开系统授权页面');
+        } catch (e) {
+          if (accessStatus) accessStatus.textContent = '打开失败：' + (e?.message || e);
+          toast('请在系统设置中手动允许通知和后台运行');
+        }
+      });
+    }
+    if (appSettingsButton && androidShell) {
+      appSettingsButton.addEventListener('click', async () => {
+        const shell = globalThis.YangShanShell;
+        if (!shell || typeof shell.openAppSettings !== 'function') return;
+        try {
+          await shell.openAppSettings();
+          if (accessStatus) accessStatus.textContent = '请在应用权限页允许通知，并将电池用量设为“不受限制”（如系统提供）。';
+        } catch (e) {
+          if (accessStatus) accessStatus.textContent = '打开失败：' + (e?.message || e);
+          toast('请在系统设置中搜索“仰山课表”并手动允许权限');
+        }
+      });
+    }
+  }
 
   $('setAlarm').addEventListener('change', (e) => { st().alarm = Number(e.target.value); saveState(); checkReminders(); });
   $('setTodoAlarm').addEventListener('change', (e) => { st().todoAlarm = Number(e.target.value); saveState(); checkReminders(); });
@@ -3789,7 +4081,7 @@ function renderScheduleChanges() {
     box.append(h('div', { class: 'change-item' },
       h('div', { class: 'change-item-main' },
         h('b', {}, changeLabel(change)),
-        h('span', {}, detail || '已调整课程时间或其他信息'),
+        h('span', {}, detail || (fields.__deleted ? '这门课已从课表里删掉' : '已调整课程时间或其他信息')),
       ),
       h('button', { class: 'icon-btn', title: '删除这条记录', onclick: () => removeChange(index) }, '✕'),
     ));
