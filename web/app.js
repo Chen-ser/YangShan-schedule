@@ -1438,6 +1438,8 @@ function renderAnnouncements() {
       },
         h('div', { class: 'ah' },
           a.pinned ? h('span', { class: 'pin-tag' }, '置顶') : null,
+          // 类别放最前面：同学扫一眼公告栏，最先想知道的是「这条是调课、考试还是通知」
+          a.category ? h('span', { class: 'ann-cat' }, a.category) : null,
           // 来源必须标出来：共享公告和私公告混在一列里，不标就分不清哪条是自己加的
           a.source === 'local' ? h('span', { class: 'src-tag' }, '本机') : null,
           h('b', {}, a.title),
@@ -2081,6 +2083,8 @@ function modalAnnouncement(a) {
   const body = [h('div', {}, h('div', { html: miniMarkdown(a.body) }))];
   if (a.link) body.push(h('p', {}, h('a', { href: a.link, target: '_blank', rel: 'noopener' }, '相关链接')));
   body.push(h('p', { class: 'muted small' },
+    a.category ? h('span', { class: 'ann-cat' }, a.category) : null,
+    a.category ? ' ' : null,
     a.source === 'local' ? `${a.date} · 只在本机，不会同步给任何人` : a.date));
 
   const actions = [];

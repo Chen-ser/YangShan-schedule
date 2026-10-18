@@ -378,6 +378,9 @@ export function normalizeAnnouncements(raw, opts = {}) {
       body: String(a.body ?? ''),
       pinned: Boolean(a.pinned),
       level: ['info', 'warn', 'urgent'].includes(a.level) ? a.level : 'info',
+      // 类别（通知/调课/考试/活动/其它…）：管理页从固定列表里选，这里刻意不设白名单 ——
+      // 别人手写的「寒暑假」「选课」不该因为不在列表里就被丢掉。只清理控制字符和长度。
+      category: String(a.category ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 12),
       link: a.link ? String(a.link) : '',
       source,
     }))

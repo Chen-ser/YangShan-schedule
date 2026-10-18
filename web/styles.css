@@ -403,6 +403,11 @@ textarea { width: 100%; min-height: 130px; resize: vertical; font-family: ui-mon
 /* 「本机」标记：私公告和共享公告混在同一列里，不标出来源就分不清哪条是自己加的。
    刻意用描边而不是实心 —— 它是状态说明，不该抢标题的注意力。 */
 .src-tag { font-size: 11px; border: 1px solid var(--line); color: var(--muted); padding: 0 5px; border-radius: 5px; }
+/* 类别（通知/调课/考试/活动…）：实心浅底，比「本机」显眼一点，因为是同学最先要找的信息。 */
+.ann-cat {
+  font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 5px;
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
 
 /* ---------------------------------------------------------- 底部导航 */
 .tabbar {

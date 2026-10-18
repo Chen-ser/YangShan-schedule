@@ -1290,6 +1290,43 @@ t('ann: 来源标记要落到 normalized 结果上', () => {
   eq(M.normalizeAnnouncements([{ id: 'a', title: 'x' }], { source: 'local' })[0].source, 'local');
 });
 
+t('ann: 类别能带着走，但不设白名单（手写的值不能被吃掉）', () => {
+  const one = (raw) => M.normalizeAnnouncements([{ id: 'a', title: 'x', ...raw }])[0];
+  eq(one({ category: '调课' }).category, '调课', '管理页选的类别要原样留下');
+  eq(one({}).category, '', '没填就是空字符串，卡片上不显示标签');
+  eq(one({ category: '选课' }).category, '选课', '不在固定列表里的值也要保留 —— 别人手写的不该消失');
+  eq(one({ category: '  考试  ' }).category, '考试', '两侧空白要清掉');
+  eq(one({ category: '很长的类别名字超过十二个字了' }).category.length, 12, '过长要截到 12 个字，免得挤坏布局');
+  eq(one({ category: '考\u0000试\n' }).category, '考试', '控制字符（含换行）必须清掉');
+});
+
+t('ann: 管理页「写公告」区必须有类别选择，并且真的写进 JSON', () => {
+  const tpl = readFileSync(join(ROOT, 'web/admin/template.html'), 'utf8');
+  const js = readFileSync(join(ROOT, 'web/admin/admin.js'), 'utf8');
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  const schema = readFileSync(join(ROOT, 'data/announcements.json'), 'utf8');
+  const cssAdmin = readFileSync(join(ROOT, 'web/admin/admin.css'), 'utf8');
+
+  const select = tpl.match(/<select id="fCategory">([\s\S]*?)<\/select>/);
+  ok(select, '表单里必须有 id="fCategory" 的下拉框');
+  const options = [...select[1].matchAll(/<option value="([^"]+)"/g)].map((m) => m[1]);
+  deepEq(options, ['通知', '调课', '考试', '活动', '其它'], '类别选项就是这五项');
+
+  // 两边的列表必须一模一样：只在 HTML 里加一项、JS 里没加，会出现「选了却被重置成通知」
+  const consts = js.match(/const CATEGORIES = \[([^\]]+)\]/);
+  ok(consts, 'admin.js 里要有 CATEGORIES 常量');
+  deepEq([...consts[1].matchAll(/'([^']*)'/g)].map((m) => m[1]), options, 'CATEGORIES 要和下拉框逐项一致');
+
+  ok(/category: \$id\('fCategory'\)\.value/.test(js), 'commitForm 必须把选中的类别写进列表项');
+  ok(/\$id\('fCategory'\)\.value = CATEGORIES\[0\]/.test(js), '清空表单要回到第一项，不能留空');
+  ok(/CATEGORIES\.includes\(a\.category\)/.test(js), '编辑已有公告要回填类别（越界的回落第一项）');
+  ok(/catTag\.textContent = a\.category/.test(js), '列表里要看得见类别');
+  ok(cssAdmin.includes('.ad-item .tag.cat'), '类别标签要有自己的样式');
+
+  ok(/a\.category \? h\('span', \{ class: 'ann-cat' \}, a\.category\)/.test(app), '应用端的公告卡片要显示类别');
+  ok(schema.includes('category'), 'announcements.json 的字段说明要写清 category');
+});
+
 t('ann: 置顶的私公告在合并后仍排最前', () => {
   const merged = M.mergeAnnouncements(
     [{ id: 's1', title: '新的共享公告', date: '2025-10-09' }],

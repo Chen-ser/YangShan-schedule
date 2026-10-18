@@ -9,6 +9,10 @@
 const LS_ADMIN = 'yangshan-admin/v1';
 const $id = (id) => document.getElementById(id);
 
+// 公告类别。发布时写进 JSON 的 category 字段，应用端只把它当卡片上的小标签。
+// 应用端刻意不做白名单（别人手写的「选课」「寒暑假」不该被丢掉），所以以后往这里加值不会让老数据失效。
+const CATEGORIES = ['通知', '调课', '考试', '活动', '其它'];
+
 const DEFAULT_CFG = {
   repo: 'Chen-ser/YangShan-schedule',
   branch: 'main',
@@ -256,12 +260,15 @@ function renderList() {
     }
     const b = document.createElement('b');
     b.textContent = a.title || '（无标题）';
+    const catTag = document.createElement('span');
+    catTag.className = 'tag cat';
+    catTag.textContent = a.category || CATEGORIES[0];
     const time = document.createElement('time');
     time.textContent = a.date || '';
     const idTag = document.createElement('span');
     idTag.className = 'tag';
     idTag.textContent = String(a.id ?? '');
-    t.append(b, time, idTag);
+    t.append(b, catTag, time, idTag);
 
     const body = document.createElement('div');
     body.className = 'body';
@@ -300,6 +307,7 @@ function resetForm() {
   editingIdx = -1;
   $id('fTitle').value = '';
   $id('fDate').value = new Date().toISOString().slice(0, 10);
+  $id('fCategory').value = CATEGORIES[0];
   $id('fLevel').value = 'info';
   $id('fLink').value = '';
   $id('fPinned').checked = false;
@@ -312,6 +320,7 @@ function startEdit(i) {
   editingIdx = i;
   $id('fTitle').value = a.title ?? '';
   $id('fDate').value = a.date ?? '';
+  $id('fCategory').value = CATEGORIES.includes(a.category) ? a.category : CATEGORIES[0];
   $id('fLevel').value = ['info', 'warn', 'urgent'].includes(a.level) ? a.level : 'info';
   $id('fLink').value = a.link ?? '';
   $id('fPinned').checked = Boolean(a.pinned);
@@ -331,6 +340,7 @@ function commitForm() {
   const patch = {
     title,
     date: $id('fDate').value || new Date().toISOString().slice(0, 10),
+    category: $id('fCategory').value,
     level: $id('fLevel').value,
     link: $id('fLink').value.trim(),
     pinned: $id('fPinned').checked,
