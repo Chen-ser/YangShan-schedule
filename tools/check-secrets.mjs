@@ -30,6 +30,16 @@ const SKIP_DIRS = new Set([
 const SKIP_FILE_RE = /(\.local\.json|\.log|\.apk|\.aab)$/i;
 const BINARY_RE = /\.(wasm|png|jpg|jpeg|gif|ico|gz|zip|nupkg|exe|dll|pdb|woff2?)$/i;
 
+// 构建产物：不入库，但它就在盘上，会被 walk 扫到。它是把 vendor 代码内联进来的结果，
+// 扫它等于把 vendor 的误报再报一次。
+const SKIP_PATHS = new Set([join('shells', 'android', 'app', 'src', 'main', 'assets', 'index.html')]);
+
+// 第三方 vendor 代码（PDF.js、OCR 运行时）里不可能出现我们学生的学号/手机号，
+// 但确实有「长得像十位学号」的常量 —— 实测 pdf.worker.min.mjs 里的 SHA-256 轮常量
+// 就被当成学号报过一次。凭据类规则照旧全扫，个人信息类对它免检。
+const VENDOR_RE = /^vendor\//;
+const PERSONAL_RULES = new Set(['中国手机号', '18 位身份证号', '10 位学号（疑似）']);
+
 const RULES = [
   // ── 真·凭据 ────────────────────────────────────────────────────────────
   { name: 'GitHub 令牌', re: /\b(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|gho_[A-Za-z0-9]{20,})\b/ },
@@ -67,6 +77,7 @@ function walk(dir, out = [], skipped = new Set()) {
     } else if (ent.isFile()) {
       if (SKIP_FILE_RE.test(ent.name)) continue;
       if (BINARY_RE.test(ent.name)) continue;
+      if (SKIP_PATHS.has(rel)) continue;
       out.push(rel.split(sep).join('/'));
     }
   }
@@ -88,6 +99,7 @@ for (const rel of files) {
   for (let i = 0; i < lines.length; i++) {
     if (ALLOW.some((a) => a.test(lines[i]))) continue;
     for (const rule of RULES) {
+      if (VENDOR_RE.test(rel) && PERSONAL_RULES.has(rule.name)) continue;
       const m = lines[i].match(rule.re);
       if (!m) continue;
       if (rule.name.startsWith('10 位学号') && PLACEHOLDER_ID.test(m[0])) continue; // 占位串

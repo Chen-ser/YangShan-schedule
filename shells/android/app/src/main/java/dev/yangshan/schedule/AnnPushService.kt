@@ -77,8 +77,11 @@ class AnnPushService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        active = startInForeground("正在接收公告")
-        if (!active) stopSelf()
+        // 这里刻意不 startForeground：onCreate 之后必定还要走 onStartCommand，
+        // 在那里做一次就够。放在这里反而多出一条时序 —— 「onCreate 里失败、
+        // startForeground 一次都没调过就 stopSelf」，正是 Android 12+ 抛
+        // ForegroundServiceDidNotStartInTimeException 的经典现场。
+        active = false
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -86,8 +89,9 @@ class AnnPushService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (!startInForeground("正在接收公告")) {
-            active = false
+        // active 只反映真实结果：网页端据此显示「后台推送已开启」还是「⚠️ 没起来」。
+        active = startInForeground("正在接收公告")
+        if (!active) {
             stopSelf()
             return START_NOT_STICKY
         }
@@ -98,9 +102,13 @@ class AnnPushService : Service() {
     }
 
     private fun startInForeground(text: String): Boolean {
-        if (!Notify.notificationsEnabled(this)) return false
+        // 通知被关掉时也要真调一次 startForeground。
+        // 服务是被 startForegroundService 拉起来的，系统会检查「期限内有没有调过
+        // startForeground」，没调就抛 ForegroundServiceDidNotStartInTimeException。
+        // 通知权限被关的用户每次开机都会走这条路 —— 所以先调、再立刻撤掉前台身份。
+        val allowed = Notify.notificationsEnabled(this)
         val n = Notify.ongoing(this, text)
-        try {
+        return try {
             if (Build.VERSION.SDK_INT >= 29) {
                 startForeground(
                     Notify.ID_ONGOING,
@@ -110,11 +118,16 @@ class AnnPushService : Service() {
             } else {
                 startForeground(Notify.ID_ONGOING, n)
             }
-            return true
+            if (allowed) {
+                true
+            } else {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                false
+            }
         } catch (e: Exception) {
             // 前台服务被系统拒绝（少见，但真机上出现过）。
             // 不抛 —— 推送失败不该让 App 崩掉。
-            return false
+            false
         }
     }
 

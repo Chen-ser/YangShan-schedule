@@ -12,7 +12,7 @@
 // 之所以要"构建"这一步，是因为同一份内核要同时喂给三个消费方：
 // 浏览器（要内联）、Node（要 ESM）、壳的 WebView（要内联）。手写两份必然会漂移。
 
-import { readFileSync, writeFileSync, mkdirSync, rmSync, copyFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, rmSync, copyFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
@@ -283,7 +283,51 @@ function build() {
   // PDF.js 作为独立 module 内联，避免把它和主应用拼进同一个作用域；
   // 它会把公开 API 暴露到 globalThis.pdfjsLib，网页、Android WebView、Windows WebView2 共用。
   const pdfJsSource = guardScript(readFileSync(join(ROOT, 'vendor', 'pdfjs', 'pdf.min.mjs'), 'utf8'));
+  // PDF.js 5.x 即使禁用真实 Worker，也会通过 fake worker 动态 import workerSrc。
+  const pdfWorkerPath = join(ROOT, 'vendor', 'pdfjs', 'pdf.worker.min.mjs');
+  if (!existsSync(pdfWorkerPath)) {
+    // 这是 PDF 导入的必需资产，而且**必须提交进仓库**（不是构建产物）。
+    // 少了它，CI 上的 `node web/build.mjs` 只会抛一句没头没尾的 ENOENT；
+    // 在这里报错能直接告诉下一个人「该补哪个文件」。
+    throw new Error('缺少 vendor/pdfjs/pdf.worker.min.mjs：PDF 导入依赖它，且它必须入库');
+  }
+  const pdfWorkerRaw = readFileSync(pdfWorkerPath, 'utf8');
+  const pdfWorkerSource = guardScript(pdfWorkerRaw);
+  // PDF.js 5.6 使用 Uint8Array#toHex() 生成文档指纹；部分 Android WebView 尚未实现该
+  // 新增标准 API。补丁放进 worker 自身，真实 Worker 和 fake worker 都能拿到。
+  const pdfCompat = `/* Android WebView compatibility for PDF.js 5.x */
+if (typeof Uint8Array.prototype.toHex !== 'function') {
+  Object.defineProperty(Uint8Array.prototype, 'toHex', {
+    configurable: true,
+    value() {
+      let out = '';
+      for (const byte of this) out += byte.toString(16).padStart(2, '0');
+      return out;
+    },
+  });
+}
+for (const Collection of [Map, WeakMap]) {
+  if (typeof Collection.prototype.getOrInsertComputed !== 'function') {
+    Object.defineProperty(Collection.prototype, 'getOrInsertComputed', {
+      configurable: true,
+      value(key, callback) {
+        if (this.has(key)) return this.get(key);
+        const value = callback(key);
+        this.set(key, value);
+        return value;
+      },
+    });
+  }
+}
+`;
+  const pdfCompatInline = `<script>${pdfCompat}</script>`;
   const pdfJsInline = `<script type="module">${pdfJsSource}</script>`;
+  const pdfWorkerInline = `<script type="text/plain" id="pdfjs-worker-src">${pdfCompat}${pdfWorkerSource}</script>`;
+  // 托管版把 worker 外置成同目录的一个文件：它是 1.2 MB，而绝大多数人从不导入 PDF。
+  // 页面里只留一个取地址的标记，app.js 看到它就把 workerSrc 指向这个相对路径；
+  // 第一次真正用到时浏览器才去取，取过就被 Service Worker 缓存住（见 sw.js 的 fetch 分支）。
+  const PDF_WORKER_FILE = 'pdf.worker.min.mjs';
+  const pdfWorkerExternal = `<script type="text/plain" id="pdfjs-worker-url">${PDF_WORKER_FILE}</script>`;
 
   assertBrowserSafe(coreSrc, 'core');
   assertBrowserSafe(appSrc, 'app');
@@ -399,7 +443,7 @@ self.addEventListener('fetch', (e) => {
     .trim()
     .replace(/<\/(script)/gi, '<\\/$1');
 
-  const fill = (html, { manifestTag, sw, icon16, icon180, ocrLibs }) =>
+  const fill = (html, { manifestTag, sw, icon16, icon180, ocrLibs, pdfWorker }) =>
     html
       .replace('/*{{STYLES}}*/', () => styles)
       .replace('/*{{CORE}}*/', () => coreSrc)
@@ -407,7 +451,9 @@ self.addEventListener('fetch', (e) => {
       .replace('/*{{BOOKMARKLET}}*/', () => bookmarklet)
       .replace('/*{{ANN_EXAMPLE}}*/', () => annExample)
       .replace('<!--{{OCRLIBS}}-->', () => ocrLibs || '')
+      .replace('<!--{{PDFJSCOMPAT}}-->', () => pdfCompatInline)
       .replace('<!--{{PDFJS}}-->', () => pdfJsInline)
+      .replace('<!--{{PDFJSWORKER}}-->', () => pdfWorker || '')
       .replace('/*{{ICON16}}*/', () => icon16)
       .replace('/*{{ICON180}}*/', () => icon180)
       .replace('/*{{BRAND_LOGO}}*/', () => brandLogo)
@@ -423,6 +469,8 @@ self.addEventListener('fetch', (e) => {
     icon16: dataUri(icons[32]),
     icon180: dataUri(icons[180]),
     ocrLibs: ocrLibsInline,
+    // 单文件版必须自给自足：file:// 下没有同目录文件可取，所以 worker 内联。
+    pdfWorker: pdfWorkerInline,
   });
   // 自检：OCR 资产必须**原样**落到单文件里。
   // 踩过一次：`</script` 的转义没生效时，浏览器会在那儿把 script 元素提前截断，
@@ -453,8 +501,13 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     sw: siteSw,
     icon16: 'icons/icon-32.png',
     icon180: 'icons/icon-180.png',
+    pdfWorker: pdfWorkerExternal,
   });
   writeFileSync(join(DIST, 'site', 'index.html'), site, 'utf8');
+  // 外置 worker：内容是「兼容补丁 + 原始 worker」，和单文件版内联的那份逐字节相同。
+  // 这里写**未转义**的原文 —— `<\\/script` 那种转义只对 HTML 里的内联块有意义，
+  // 写进 .mjs 文件反而可能变成语法错误。
+  writeFileSync(join(DIST, 'site', PDF_WORKER_FILE), `${pdfCompat}${pdfWorkerRaw}`, 'utf8');
   writeFileSync(join(DIST, 'site', 'manifest.webmanifest'), JSON.stringify(manifest, null, 2), 'utf8');
   for (const [s, buf] of Object.entries(icons)) {
     writeFileSync(join(DIST, 'site', 'icons', `icon-${s}.png`), buf);

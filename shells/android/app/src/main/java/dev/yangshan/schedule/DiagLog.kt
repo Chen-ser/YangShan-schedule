@@ -3,6 +3,8 @@ package dev.yangshan.schedule
 import android.content.Context
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -18,8 +20,22 @@ object DiagLog {
     private const val KEY_LINES = "lines"
     private const val MAX_LINES = 240
     private const val MAX_CHARS = 48_000
+
+    /** 攒到这么多字符就先落一次盘，免得事件太密时内存里堆住。 */
+    private const val FLUSH_CHARS = 8_000
+
+    /** 平时的落盘间隔：一次抓取的几十条事件会合并成一两次写盘。 */
+    private const val FLUSH_DELAY_MS = 300L
+
     private val lock = Any()
     private var app: Context? = null
+    private val pending = StringBuilder()
+    private var pendingClear = false
+    private var flushScheduled = false
+    private val handler = Handler(Looper.getMainLooper())
+    private val flushTask = Runnable {
+        synchronized(lock) { flushLocked() }
+    }
 
     fun begin(context: Context, interactive: Boolean) {
         synchronized(lock) {
@@ -27,18 +43,20 @@ object DiagLog {
             // 只有用户主动发起的那次才清空日志。
             // 后台刷新（RefreshWorker，每小时一次）如果也清空，用户刚看到的失败原因
             // 会在一个小时内被它覆盖掉，「导出诊断日志」拿到的就不是他看到的那次了。
-            writeLocked(
+            appendLocked(
                 "BEGIN mode=${if (interactive) "interactive" else "background"} " +
                     "version=${BuildConfig.VERSION_NAME} sdk=${Build.VERSION.SDK_INT}",
                 clear = interactive,
             )
+            // 开局这一条要立刻可见 —— 用户可能马上就点「导出诊断日志」。
+            flushLocked()
         }
     }
 
     fun event(message: String) {
         synchronized(lock) {
             if (app == null) return
-            writeLocked(sanitize(message), clear = false)
+            appendLocked(sanitize(message), clear = false)
         }
     }
 
@@ -56,6 +74,8 @@ object DiagLog {
     fun export(context: Context): String {
         synchronized(lock) {
             app = context.applicationContext
+            // 还没到落盘时间的那几条也要出现在导出的日志里。
+            flushLocked()
             val lines = app!!.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getString(KEY_LINES, "")
                 .orEmpty()
@@ -67,12 +87,38 @@ object DiagLog {
         }
     }
 
-    private fun writeLocked(message: String, clear: Boolean) {
-        val context = app ?: return
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val current = if (clear) "" else prefs.getString(KEY_LINES, "").orEmpty()
+    private fun appendLocked(message: String, clear: Boolean) {
+        if (app == null) return
+        if (clear) {
+            pending.setLength(0)
+            pendingClear = true
+        }
         val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
-        val next = (current + "$stamp $message\n")
+        pending.append(stamp).append(' ').append(message).append('\n')
+        if (pending.length >= FLUSH_CHARS) {
+            // 一条抓取里事件很密。每条都读一遍 48 KB、拼一遍、再写一遍磁盘，
+            // 在低端机上会明显拖慢。攒到一定量或隔一小会儿再落盘。
+            flushLocked()
+        } else {
+            scheduleFlushLocked()
+        }
+    }
+
+    private fun scheduleFlushLocked() {
+        if (flushScheduled) return
+        flushScheduled = true
+        handler.postDelayed(flushTask, FLUSH_DELAY_MS)
+    }
+
+    private fun flushLocked() {
+        flushScheduled = false
+        handler.removeCallbacks(flushTask)
+        val context = app ?: return
+        if (pending.isEmpty() && !pendingClear) return
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val current = if (pendingClear) "" else prefs.getString(KEY_LINES, "").orEmpty()
+        pendingClear = false
+        val next = (current + pending.toString())
             .lineSequence()
             .filter { it.isNotBlank() }
             .toList()
@@ -80,6 +126,7 @@ object DiagLog {
             .joinToString("\n")
             .takeLast(MAX_CHARS)
             .let { if (it.isBlank()) "" else "$it\n" }
+        pending.setLength(0)
         prefs.edit().putString(KEY_LINES, next).apply()
     }
 

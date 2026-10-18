@@ -162,6 +162,10 @@
           <button class="ghost-btn" id="btnShareCode">生成分享码</button>
           <button class="ghost-btn" id="btnExportImage">导出课表图片</button>
         </div>
+        <label class="row small">
+          <span>备份里带上助手对话<small class="muted">（含你问过的内容、附件里的图片；备份是拿来发给别人的，默认不带）</small></span>
+          <input type="checkbox" id="setBackupAssistant">
+        </label>
       </div>
 
       <div class="card">
@@ -231,6 +235,16 @@
           <button class="primary-btn" id="btnSaveAi">保存助手设置</button>
         </div>
         <p class="muted small" id="aiConfigStatus"></p>
+        <label class="row"><span>PDF 转换页数</span>
+          <select id="setPdfPageLimit">
+            <option value="6">最多 6 页</option>
+            <option value="12">最多 12 页</option>
+            <option value="24">最多 24 页</option>
+            <option value="48">最多 48 页</option>
+            <option value="0">无上限</option>
+          </select>
+        </label>
+        <p class="muted small">页数越多，占用的手机内存、转换时间和模型请求数据越大；无上限仅建议在电脑或大内存设备使用。</p>
       </div>
 
       <div class="card">
@@ -339,7 +353,9 @@
      单一来源 —— 用户就是照抄这份示例去建自己的公告源的，示例和解析器不能各写一份。 -->
 <script type="application/json" id="ann-example">/*{{ANN_EXAMPLE}}*/</script>
 <!--{{OCRLIBS}}-->
+<!--{{PDFJSCOMPAT}}-->
 <!--{{PDFJS}}-->
+<!--{{PDFJSWORKER}}-->
 
 <script type="module">
 /*{{CORE}}*/

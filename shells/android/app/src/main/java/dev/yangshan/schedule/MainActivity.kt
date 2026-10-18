@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.OpenableColumns
 import android.view.ViewGroup
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -12,8 +13,11 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
+import android.widget.Toast
 import androidx.webkit.WebViewAssetLoader
 import org.json.JSONObject
+import java.io.File
+import java.io.FileOutputStream
 
 /**
  * 课表内核的主窗口。
@@ -31,17 +35,38 @@ class MainActivity : Activity(), ShellBridge.Host {
         private const val REQ_LOGIN = 4001
         private const val REQ_NOTIFY = 4002
         private const val REQ_FILE = 4003
+        private const val MAX_SHARED_BYTES = 30L * 1024L * 1024L
+        // 冷启动要先把 2.4 MB 的页面铺起来，3 秒常常不够（旧值 12 次 × 250 ms）。
+        // 现在前 12 次仍然快（页面通常已经好了），之后放慢到 1 秒一次，总共约一分钟。
+        private const val SHARE_FAST_TRIES = 12
+        private const val SHARE_MAX_TRIES = 72
     }
 
     private lateinit var web: WebView
+    private lateinit var shareDir: File
+    private var pendingShare: SharePayload? = null
+    private var shareDeliveryTries = 0
 
     /** 正在处理的请求 id（来自 shim 那一侧的 id），抓完用它把结果送回去。 */
     private var pendingId: String? = null
     private var pendingNotifyId: String? = null
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
 
+    private data class SharePayload(
+        val text: String?,
+        val name: String?,
+        val mime: String?,
+        val url: String?,
+        val error: String? = null,
+        /** 不是错误、但用户该知道的事，比如「多选分享只取了第一个」。 */
+        val notice: String? = null,
+    )
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        shareDir = File(cacheDir, "share-inbox")
+        shareDir.mkdirs()
+        pendingShare = readShareIntent(intent)
 
         // Android 13 起通知要用户点头。不给也能用，只是后台刷新完没法提示。
         web = WebView(this).apply {
@@ -82,6 +107,7 @@ class MainActivity : Activity(), ShellBridge.Host {
 
         val loader = WebViewAssetLoader.Builder()
             .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
+            .addPathHandler("/shared/", WebViewAssetLoader.InternalStoragePathHandler(this, shareDir))
             .build()
 
         web.webViewClient = object : WebViewClient() {
@@ -89,7 +115,15 @@ class MainActivity : Activity(), ShellBridge.Host {
                 loader.shouldInterceptRequest(request.url)
 
             override fun onPageFinished(view: WebView, url: String) {
-                if (url.startsWith(ORIGIN)) restoreIfNeeded()
+                if (url.startsWith(ORIGIN)) {
+                    restoreIfNeeded()
+                    // 页面刚铺好，把分享的窗口重新给满：onCreate 那一轮往往在页面
+                    // 还没起来时就用完了计数，等 onPageFinished 时已经放弃。
+                    if (pendingShare != null) {
+                        shareDeliveryTries = 0
+                        deliverPendingShare()
+                    }
+                }
             }
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -108,6 +142,138 @@ class MainActivity : Activity(), ShellBridge.Host {
         // 服务可能被系统杀过（省电、内存），这里按已存的配置把它恢复回来。
         // 没配过频道时 AnnPush.apply 什么也不做。
         AnnPush.apply(this)
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingShare = readShareIntent(intent)
+        if (pendingShare != null) deliverPendingShare()
+    }
+
+    private fun readShareIntent(incoming: Intent?): SharePayload? {
+        val action = incoming?.action ?: return null
+        if (action != Intent.ACTION_SEND && action != Intent.ACTION_SEND_MULTIPLE) return null
+
+        val text = incoming.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.trim().orEmpty()
+        val streams: List<Uri> = when {
+            action == Intent.ACTION_SEND -> listOfNotNull(incoming.getParcelableExtra<Uri>(Intent.EXTRA_STREAM))
+            else -> incoming.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM).orEmpty()
+        }
+        val uri = streams.firstOrNull()
+        if (uri == null) {
+            return if (text.isNotBlank()) SharePayload(text, null, "text/plain", null) else null
+        }
+        // 多选分享只支持第一份。以前是静默丢掉其余文件，用户会以为全都导进去了。
+        val extraNotice = if (streams.size > 1) "（一次只能导入一个文件，已取第一个）" else ""
+
+        return try {
+            val name = sharedDisplayName(uri)
+            val mime = contentResolver.getType(uri) ?: incoming.type ?: "application/octet-stream"
+            val fileName = safeShareName(name, mime)
+            val target = File(shareDir, fileName)
+            shareDir.mkdirs()
+            pruneShareDir()
+            // 体积先问一句：能拿到声明长度就别先拷 30 MB 再报错。
+            val declared = try {
+                contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L
+            } catch (_: Exception) {
+                -1L
+            }
+            if (declared > MAX_SHARED_BYTES) {
+                return SharePayload(null, null, null, null, "文件过大，暂不支持超过 30 MB 的分享文件。")
+            }
+            contentResolver.openInputStream(uri)?.use { input ->
+                FileOutputStream(target).use { output ->
+                    val buffer = ByteArray(64 * 1024)
+                    var total = 0L
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count <= 0) break
+                        total += count
+                        if (total > MAX_SHARED_BYTES) {
+                            target.delete()
+                            return SharePayload(null, null, null, null, "文件过大，暂不支持超过 30 MB 的分享文件。")
+                        }
+                        output.write(buffer, 0, count)
+                    }
+                }
+            } ?: return SharePayload(null, null, null, null, "无法读取微信分享的文件。")
+            SharePayload(text.ifBlank { null }, fileName, mime, "$ORIGIN/shared/${Uri.encode(fileName)}", null, extraNotice)
+        } catch (e: Exception) {
+            SharePayload(null, null, null, null, "读取分享文件失败：${e.message ?: "未知错误"}")
+        }
+    }
+
+    /**
+     * 清掉过期的落盘文件。
+     *
+     * 不能「一律清空」：receiveShare 是异步 fetch 的，刚交付就删会把文件删掉。
+     * 也不能不清：分享一次留一份，应用开久了就在 cache 里堆着。
+     * 10 分钟足够页面取完，也足够把上一次的残留收走。
+     */
+    private fun pruneShareDir() {
+        val cutoff = System.currentTimeMillis() - 10 * 60 * 1000L
+        shareDir.listFiles()?.forEach { file -> if (file.lastModified() < cutoff) file.delete() }
+    }
+
+    private fun sharedDisplayName(uri: Uri): String? {
+        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (index >= 0) return cursor.getString(index)
+            }
+        }
+        return uri.lastPathSegment
+    }
+
+    private fun safeShareName(name: String?, mime: String): String {
+        val cleaned = name.orEmpty().replace(Regex("[^A-Za-z0-9._-]"), "_").trim('_')
+        // 只由点组成的名字（".."、"..."）不能放行：File(shareDir, "..") 指向上一级目录。
+        // 目前是靠 FileOutputStream 对目录抛异常挡下来的 —— 那是碰运气，不是设计。
+        val looksReal = cleaned.isNotBlank() && cleaned.contains('.') && cleaned.any { it != '.' }
+        if (looksReal) return cleaned.take(120)
+        val extension = when {
+            mime.startsWith("image/") -> ".jpg"
+            mime == "application/pdf" -> ".pdf"
+            mime.contains("word") -> ".docx"
+            mime.contains("presentation") -> ".pptx"
+            mime.startsWith("text/") -> ".txt"
+            else -> ".bin"
+        }
+        return "shared-file$extension"
+    }
+
+    private fun deliverPendingShare() {
+        val payload = pendingShare ?: return
+        if (shareDeliveryTries >= SHARE_MAX_TRIES) {
+            // 到点了还没送进去：不能静默丢掉。用户从微信点了「分享到仰山课表」，
+            // 应用也确实打开了，如果这里什么都不说，他会以为文件已经导入了。
+            pendingShare = null
+            shareDeliveryTries = 0
+            Toast.makeText(this, "分享的文件还没载入页面就超时了，请在应用里手动导入。", Toast.LENGTH_LONG).show()
+            return
+        }
+        val json = JSONObject()
+            .put("text", payload.text ?: JSONObject.NULL)
+            .put("name", payload.name ?: JSONObject.NULL)
+            .put("mime", payload.mime ?: JSONObject.NULL)
+            .put("url", payload.url ?: JSONObject.NULL)
+            .put("error", payload.error ?: JSONObject.NULL)
+            .put("notice", payload.notice ?: JSONObject.NULL)
+        web.evaluateJavascript(
+            "(globalThis.YangShan && typeof globalThis.YangShan.receiveShare === 'function')" +
+                " ? (globalThis.YangShan.receiveShare(${json}) , 'ready') : 'waiting'"
+        ) { result ->
+            if (result?.contains("ready") == true) {
+                pendingShare = null
+                shareDeliveryTries = 0
+            } else {
+                shareDeliveryTries += 1
+                val delay = if (shareDeliveryTries < SHARE_FAST_TRIES) 250L else 1000L
+                web.postDelayed({ deliverPendingShare() }, delay)
+            }
+        }
     }
 
     override fun onResume() {

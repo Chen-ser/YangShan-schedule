@@ -134,7 +134,10 @@ class SchoolWeb(
                             "line=${message.lineNumber()} chars=${message.message().length}",
                     )
                 }
-                return true
+                // 只有非错误才吞掉（页面上那些无关紧要的日志）。
+                // 错误必须交回系统：不返回 false 的话 logcat 里一条都看不到，
+                // 真机排查时会出现「控制台明明没报错」的假象。
+                return message.messageLevel() != ConsoleMessage.MessageLevel.ERROR
             }
         }
     }

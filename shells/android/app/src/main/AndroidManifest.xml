@@ -35,6 +35,23 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!--
+                只声明真正能导入的类型。原来两处都是 */*，结果是视频、APK、压缩包
+                都能把本应用列进「分享到」里，点进来再告诉用户「不支持」——
+                与其到处露脸，不如只出现在能干活的场合。
+                SEND_MULTIPLE 一并去掉：内核一次只能导入一个文件，
+                声明了多选却只取第一份，用户会以为剩下的也进去了。
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="text/*" />
+                <data android:mimeType="application/json" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.presentationml.presentation" />
+            </intent-filter>
         </activity>
 
         <!--

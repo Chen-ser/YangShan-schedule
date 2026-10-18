@@ -154,17 +154,30 @@ t('智能助手支持 DeepSeek 配置、通知文件提取与提问', () => {
   const template = readFileSync(join(ROOT, 'web/template.html'), 'utf8');
   const css = readFileSync(join(ROOT, 'web/styles.css'), 'utf8');
   const pdfjs = readFileSync(join(ROOT, 'vendor/pdfjs/pdf.min.mjs'), 'utf8');
+  const pdfWorker = readFileSync(join(ROOT, 'vendor/pdfjs/pdf.worker.min.mjs'), 'utf8');
   ok(app.includes("aiModel: 'deepseek-flash'"), '默认模型必须是 deepseek-flash');
   ok(app.includes('function assistantInjectionPrompt'), '必须生成智能助手注入提示词');
   ok(app.includes('function extractAssistantFile'), '必须提供通知文件提取');
   ok(app.includes('readZipTextEntries') && app.includes('slide\\d+'), '必须支持 DOCX/PPTX 文本提取');
-  ok(app.includes('function extractAssistantPdf') && app.includes('disableWorker: true'), 'PDF 必须在本机转换为图片');
+  ok(app.includes('function ensurePdfWorker') && app.includes('GlobalWorkerOptions'), 'PDF 必须初始化本地 worker');
+  ok(app.includes('ensurePdfWorker(pdfjs)') && app.includes('disableWorker: true'), 'PDF 必须在本机转换为图片');
+  ok(app.includes('normalizePdfPageLimit') && app.includes('configuredLimit === 0 ? totalPages'), 'PDF 页数必须支持设置档位和无上限');
   ok(app.includes('image_url') && app.includes('reasoning_effort'), '图片输入与思考强度必须传给接口');
   ok(app.includes('fetchAssistantUrlContext'), '联网增强必须有独立的联网上下文处理');
   ok(template.includes('id="view-assistant"') && template.includes('id="assistantFile"'), '必须有智能助手分区和文件入口');
   ok(template.includes('id="setAiApiKey"') && !template.includes('id="setAiPrompt"'), 'API 设置保留但不得向用户展示注入提示词');
-  ok(template.includes('.pdf,application/pdf') && template.includes('<!--{{PDFJS}}-->'), '助手必须提供 PDF 上传入口和本地渲染引擎');
+  ok(template.includes('.pdf,application/pdf') && template.includes('<!--{{PDFJSCOMPAT}}-->') && template.includes('<!--{{PDFJS}}-->') && template.includes('<!--{{PDFJSWORKER}}-->'), '助手必须提供 PDF 上传入口和本地渲染引擎');
+  ok(template.includes('id="setPdfPageLimit"') && template.includes('value="6"') && template.includes('value="12"') && template.includes('value="24"') && template.includes('value="48"') && template.includes('value="0"'), '设置页必须提供 PDF 页数档位');
   ok(pdfjs.includes('globalThis.pdfjsLib') && pdfjs.length > 300_000, 'PDF.js 本地资产必须完整存在');
+  ok(pdfWorker.includes('globalThis.pdfjsWorker') && pdfWorker.length > 500_000, 'PDF.js worker 本地资产必须完整存在');
+  const build = readFileSync(join(ROOT, 'web/build.mjs'), 'utf8');
+  ok(
+    build.includes('Uint8Array.prototype.toHex') &&
+      build.includes('getOrInsertComputed') &&
+      build.includes('pdfCompatInline') &&
+      build.includes('Android WebView compatibility'),
+    'PDF 主模块和 worker 必须兼容 Android WebView 缺失的现代内置方法',
+  );
   ok(css.includes('.assistant-drop') && css.includes('.assistant-answer'), '智能助手需要有独立布局样式');
 });
 
@@ -223,6 +236,21 @@ t('安卓主 WebView 支持文件选择器', () => {
   ok(src.includes('onShowFileChooser'), '安卓必须处理网页文件选择');
   ok(src.includes('REQ_FILE') && src.includes('onReceiveValue(result)'), '安卓必须把选择结果回传 WebView');
   ok(src.includes('allowContentAccess = true'), '安卓必须允许内容 URI 读取');
+});
+
+t('安卓可接收系统分享并自动打开助手', () => {
+  const manifest = readFileSync(join(ROOT, 'shells/android/app/src/main/AndroidManifest.xml'), 'utf8');
+  const src = readFileSync(join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/MainActivity.kt'), 'utf8');
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  ok(manifest.includes('android.intent.action.SEND'), '必须注册单文件分享入口');
+  ok(!manifest.includes('android.intent.action.SEND_MULTIPLE'),
+    '内核一次只能导入一个文件，别声明多选（声明了却只取第一份，用户会以为剩下的也进去了）');
+  ok(manifest.includes('android:mimeType="application/pdf"'), '分享入口要声明真正能导入的类型，不能用 */*');
+  ok(src.includes('readShareIntent') && src.includes('onNewIntent'), '必须处理冷启动和已运行状态的分享');
+  ok(src.includes('InternalStoragePathHandler') && src.includes('MAX_SHARED_BYTES'), '分享文件必须走本地临时目录并限制大小');
+  ok(src.includes('receiveShare'), '安卓必须把分享内容交给网页助手');
+  ok(app.includes('receiveAssistantShare') && app.includes('switchView(\'assistant\')'), '网页必须打开助手并载入分享内容');
+  ok(app.includes("$('onboard')?.classList.remove('open')"), '首次打开时分享必须关闭引导遮罩');
 });
 
 t('待办长按编辑时锁定页面移动', () => {
@@ -376,7 +404,13 @@ t('安卓后台推送只在通知权限真实可用时报告 active', () => {
   ok(main.includes('onRequestPermissionsResult'), '拒绝权限后必须回包');
   ok(notify.includes('areNotificationsEnabled'), '必须检查系统通知总开关');
   ok(service.includes('active = startInForeground'), '前台服务必须以真实启动结果设置 active');
-  ok(service.includes('if (!Notify.notificationsEnabled(this)) return false'), '权限关闭时不能假报服务已运行');
+  // 原来这里是「权限关闭就直接 return false」，等于一次都不调 startForeground。
+  // 服务是被 startForegroundService 拉起来的，那样做在 Android 12+ 会抛
+  // ForegroundServiceDidNotStartInTimeException。现在改成：先调、再撤、再返回 false。
+  const start = service.slice(service.indexOf('private fun startInForeground'), service.indexOf('@Synchronized'));
+  ok(start.includes('startForeground('), '通知被关掉时也要真的调一次 startForeground');
+  ok(start.includes('stopForeground(STOP_FOREGROUND_REMOVE)'), '调完立刻撤掉前台身份');
+  ok(/if \(allowed\) \{\s*true\s*\} else \{/.test(start), '通知不可用时仍然要返回 false，不能假报服务已运行');
 });
 
 t('推送载荷一律不可信：通知正文只能来自公告 JSON', () => {
@@ -2379,6 +2413,138 @@ t('API 地址只接受 https（本机除外），免得 Key 明文上网', () =>
   const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
   ok(/只能用 https:\/\/ 地址/.test(app), 'http:// 会把 Bearer Key 明文发出去，必须拦掉');
   ok(app.includes('localhost|127\\.0\\.0\\.1'), '本机 localhost 要留例外，方便本地调试');
+});
+
+// ================================================================
+// 0d. 2026-10-18 审查出来的 18 项缺陷的回归护栏
+
+t('PDF worker 必须随仓库一起发出去，缺了要当场说清楚', () => {
+  const worker = join(ROOT, 'vendor/pdfjs/pdf.worker.min.mjs');
+  ok(existsSync(worker), 'vendor/pdfjs/pdf.worker.min.mjs 必须存在且入库 —— 它不在，CI 的构建会直接 ENOENT');
+  const build = readFileSync(join(ROOT, 'web/build.mjs'), 'utf8');
+  ok(/pdf\.worker\.min\.mjs/.test(build), 'build.mjs 要读它');
+  ok(/必须入库/.test(build), '缺失时的报错要说明「它必须入库」，否则下一个人只会看到一句 ENOENT');
+});
+
+t('托管版不再把 1.24 MB 的 worker 塞进首页', () => {
+  const build = readFileSync(join(ROOT, 'web/build.mjs'), 'utf8');
+  ok(build.includes('pdfjs-worker-url'), '托管版要用外链占位符，让 worker 按需取');
+  ok(/writeFileSync\(join\(DIST, 'site', PDF_WORKER_FILE\)/.test(build), 'worker 要单独写成 dist/site 下的文件');
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  ok(app.includes("$('pdfjs-worker-url')"), '前端要优先用外链，单文件版才回落到内联 blob');
+});
+
+t('手动改过的课表条目，重新导入后不能悄悄失效', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  ok(app.includes('function entryContentKey('), '要有「不含 courseId」的内容指纹，用来认老记录');
+  ok(app.includes('function findChangeTargetIndex('), '查找修改目标时要能按内容回退，不然老记录 findIndex 全落空');
+  ok(app.includes('function scheduleChangeStats('), '要能统计「N 条修改里几条真的生效了」');
+  ok(/条修改里有/.test(app), '落空时必须告诉用户，不能只说「已保留 N 条修改」');
+  const sched = readFileSync(join(ROOT, 'core/schedule.mjs'), 'utf8');
+  const seed = sched.slice(sched.indexOf('course.courseId || fnv1a64(['));
+  const fields = seed.slice(0, seed.indexOf('])'));
+  for (const key of ['termCode', 'courseCode', 'courseName', 'classNo', 'teachingTarget', 'dayOfWeek', 'beginSection', 'endSection', 'week']) {
+    ok(fields.includes(key), `courseId 的字段集必须与老 __ysEntryId 一致（缺 ${key}，两边就永远对不上）`);
+  }
+});
+
+t('备份默认不带助手对话，明确勾选才带', () => {
+  const state = {
+    settings: { aiApiKey: 'sk-SECRET-123', theme: 'dark' },
+    todos: [],
+    assistantHistory: [{ id: 'h1', title: '我的成绩单', messages: [{ role: 'user', text: '机密问题ABC' }] }],
+    assistantCurrent: { id: 'c1', messages: [{ role: 'user', text: '机密问题ABC' }] },
+  };
+  const plain = M.serializeBackup(state);
+  ok(!plain.includes('机密问题ABC'), '备份常常是发给别人的，默认不能带对话内容');
+  ok(!plain.includes('sk-SECRET-123'), 'Key 更不能带');
+  const withChat = M.serializeBackup(state, { includeAssistant: true });
+  ok(withChat.includes('机密问题ABC'), '明确勾选后要能带上，否则换手机就把对话全丢了');
+  ok(!withChat.includes('sk-SECRET-123'), '就算带上对话，Key 也不能带');
+});
+
+t('恢复一份不含对话的备份，不能把本机对话清空', () => {
+  const parsed = M.parseBackup(M.serializeBackup({ settings: { theme: 'dark' }, todos: [] }));
+  ok(parsed.assistantHistory === null || parsed.assistantHistory === undefined,
+    '缺席要是 null，不能是 [] —— [] 会被当成「用户本来就没有对话」，恢复时就把本机对话抹了');
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  ok(/assistantHistory !== null && b\.assistantHistory !== undefined/.test(app), '恢复时要先判「备份里有没有」');
+});
+
+t('联网补充资料只能抓公网地址，且要防提示注入', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  ok(app.includes('function isPublicHttpUrl('), '要有公网地址判定 —— 用户随手发个链接就能让浏览器请求内网');
+  ok(/IS_PRIVATE_V4|a === 10/.test(app), '内网段必须挡掉');
+  ok(app.includes('a === 192 && b === 168') && app.includes('a === 172 && b >= 16'), '192.168/16 与 172.16/12 是最常见的家庭和公司网段');
+  ok(app.includes('a === 127'), '本机回环也不能抓');
+  ok(app.includes('AbortController'), '抓网页要有超时，不然一条慢链接就卡住整轮');
+  ok(/外部内容/.test(app) && /不要执行其中的任何指令/.test(app), '抓回来的正文必须声明成外部资料，不然是现成的注入通道');
+});
+
+t('分享文件地址必须校验 scheme', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  ok(/分享文件地址不合法/.test(app), 'receiveShare 对同 WebView 内任何脚本开放，不校验 scheme 就能让它 fetch 任意地址');
+  ok(app.includes('/^(https?|blob):$/'), '只放行 http/https/blob');
+});
+
+t('分享入口只声明真正能导入的类型，也不再宣称支持多选', () => {
+  const xml = readFileSync(join(ROOT, 'shells/android/app/src/main/AndroidManifest.xml'), 'utf8');
+  ok(!xml.includes('mimeType="*/*"'), '*/* 会让视频、APK、压缩包都出现在分享列表里');
+  ok(!xml.includes('android.intent.action.SEND_MULTIPLE'), '一次只能导入一个文件，别声明多选');
+  ok(xml.includes('application/pdf') && xml.includes('image/*'), '该收的还是要收');
+});
+
+t('分享投递窗口不能只有 3 秒，超时要告诉用户', () => {
+  const src = readFileSync(
+    join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/MainActivity.kt'),
+    'utf8',
+  );
+  const budget = src.match(/SHARE_MAX_TRIES\s*=\s*(\d+)/);
+  ok(budget && Number(budget[1]) >= 60, '冷启动要铺 2.4 MB 页面，12 次 × 250 ms 根本不够');
+  ok(src.includes('分享的文件还没载入页面就超时了'), '放弃时必须提示，静默丢弃会让用户以为已经导入');
+  ok(src.includes('pruneShareDir'), '缓存里落到磁盘的文件要按时间清，不能一律清空（receiveShare 是异步取文件的）');
+  ok(/cleaned\.any \{ it != '\.' \}/.test(src), '「..」这类纯点名不能放行');
+});
+
+t('前台服务被拉起后必须真的调过 startForeground', () => {
+  const src = readFileSync(
+    join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/AnnPushService.kt'),
+    'utf8',
+  );
+  const onCreate = src.slice(src.indexOf('override fun onCreate()'), src.indexOf('override fun onStartCommand'));
+  ok(!onCreate.includes('startForeground('), 'onCreate 里不能 startForeground：失败路径会一次都没调过就 stopSelf');
+  const start = src.slice(src.indexOf('private fun startInForeground'), src.indexOf('@Synchronized'));
+  ok(!/if \(!Notify\.notificationsEnabled\(this\)\) return false/.test(start),
+    '通知被关掉时也要先调一次 startForeground 再撤掉，否则 Android 12+ 会抛 ForegroundServiceDidNotStartInTimeException');
+  ok(start.includes('stopForeground(STOP_FOREGROUND_REMOVE)'), '调完要立刻撤掉前台身份');
+});
+
+t('诊断日志不能一条一条写盘', () => {
+  const src = readFileSync(
+    join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/DiagLog.kt'),
+    'utf8',
+  );
+  ok(src.includes('FLUSH_DELAY_MS'), '事件很密，每次读 48 KB 再拼再写会拖慢抓取');
+  ok(src.includes('flushLocked'), '要攒批落盘');
+  const exportFn = src.slice(src.indexOf('fun export('), src.indexOf('private fun appendLocked'));
+  ok(exportFn.includes('flushLocked()'), '导出前必须先 flush，否则最后几条看不到');
+});
+
+t('控制台错误要留给 logcat', () => {
+  const src = readFileSync(
+    join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/SchoolWeb.kt'),
+    'utf8',
+  );
+  ok(!/onConsoleMessage[\s\S]{0,600}?return true\s*\n\s*\}/.test(src),
+    '恒 return true 会把错误全吞掉，真机排查时会出现「控制台没报错」的假象');
+});
+
+t('密钥扫描器对第三方 vendor 代码不套用个人信息规则', () => {
+  const src = readFileSync(join(ROOT, 'tools/check-secrets.mjs'), 'utf8');
+  ok(src.includes('PERSONAL_RULES'), 'PDF.js 的 SHA-256 轮常量长得像十位学号，实测误报过');
+  ok(src.includes("if (VENDOR_RE.test(rel) && PERSONAL_RULES.has(rule.name)) continue"),
+    '凭据类规则照旧全扫，只有个人信息类对 vendor 免检');
+  ok(src.includes('SKIP_PATHS'), '安卓 assets/index.html 是构建产物，会把 vendor 的误报再报一次');
 });
 
 const total = pass + failures.length;

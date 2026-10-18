@@ -614,7 +614,16 @@ function settingsForBackup(settings) {
   return out;
 }
 
-export function serializeBackup(state) {
+/**
+ * 备份默认**不带**助手对话。
+ *
+ * 对话里有你问过的每一句话、PDF 抽出来的文字层、还有最多 6 张/条的图片 data URL。
+ * 而备份天生是要交给别人的：换设备、发同学、传网盘、丢群里。这些内容不该默认跟着走，
+ * 否则一份 5 MB 的备份里可能大半是你和模型的聊天记录和合同照片。
+ * 真要带上得在导出时显式勾选（includeAssistant: true）。
+ */
+export function serializeBackup(state, opts = {}) {
+  const includeAssistant = opts?.includeAssistant === true;
   return JSON.stringify(
     {
       schema: SCHEMA,
@@ -623,8 +632,12 @@ export function serializeBackup(state) {
       schedule: state?.schedule ?? null,
       scheduleBase: state?.scheduleBase ?? null,
       scheduleChanges: state?.scheduleChanges ?? [],
-      assistantCurrent: state?.assistantCurrent ?? null,
-      assistantHistory: state?.assistantHistory ?? [],
+      ...(includeAssistant
+        ? {
+          assistantCurrent: state?.assistantCurrent ?? null,
+          assistantHistory: state?.assistantHistory ?? [],
+        }
+        : {}),
       todos: state?.todos ?? [],
       readAnnouncements: state?.readAnnouncements ?? [],
       settings: settingsForBackup(state?.settings),
@@ -651,7 +664,9 @@ export function parseBackup(text) {
     scheduleBase: obj.scheduleBase ?? null,
     scheduleChanges: Array.isArray(obj.scheduleChanges) ? obj.scheduleChanges : [],
     assistantCurrent: obj.assistantCurrent && typeof obj.assistantCurrent === 'object' ? obj.assistantCurrent : null,
-    assistantHistory: Array.isArray(obj.assistantHistory) ? obj.assistantHistory : [],
+    // null = 「这份备份里没有对话」，和「有对话但一条都没有」([]) 是两件事：
+    // 恢复时要靠这个区别决定是覆盖本机对话还是保持原样。
+    assistantHistory: Array.isArray(obj.assistantHistory) ? obj.assistantHistory : null,
     todos: Array.isArray(obj.todos) ? obj.todos : [],
     readAnnouncements: Array.isArray(obj.readAnnouncements) ? obj.readAnnouncements : [],
     settings: obj.settings && typeof obj.settings === 'object' ? obj.settings : {},
