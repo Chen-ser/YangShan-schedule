@@ -244,6 +244,9 @@ html.schedule-drag-lock body {
 .change-item-main b { display: block; overflow-wrap: anywhere; }
 .change-item-main span { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
 .change-item .icon-btn { flex: 0 0 auto; }
+.ann-source-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid var(--border); }
+.ann-source-info { min-width: 0; display: flex; flex-direction: column; gap: 3px; overflow: hidden; }
+.ann-source-info span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------------------------------------------------------- 导入三选一 */
 /* 拖文件进导入框时的提示态（文本域和卡片都要）*/

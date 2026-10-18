@@ -10,6 +10,12 @@
 
 const VERSION = '__VERSION__';
 const LS_KEY = 'yangshan-schedule/v1';
+const DEFAULT_ANNOUNCEMENT_SOURCE = Object.freeze({
+  id: 'default-bistu-all',
+  url: 'https://chen-ser.github.io/YangShan-schedule/data/announcements.json',
+  topic: 'ys-bistu-all',
+  name: '北京信息科技大学公告',
+});
 const DEFAULT_SETTINGS = {
   alarm: 15,
   todoAlarm: 30,   // 作业/网课/考试截止前多少分钟提醒
@@ -20,6 +26,8 @@ const DEFAULT_SETTINGS = {
   annUrl: '',
   // ntfy 频道名，来自「公告分享码」。空则只定时轮询、不订阅推送。
   annTopic: '',
+  // 用户自己添加的公告源。内置默认源不放进这里，因此不会显示、也不能被删除。
+  annSources: [],
   // 收到新公告时弹不弹系统通知（默认关：未经用户同意就弹窗是很讨嫌的行为）
   annNotify: false,
   // 智能助手配置：只保存在本机，不会随课表分享码导出。
@@ -37,6 +45,62 @@ const PDF_PAGE_LIMIT_OPTIONS = [6, 12, 24, 48, 0];
 function normalizePdfPageLimit(value) {
   const limit = Number(value);
   return PDF_PAGE_LIMIT_OPTIONS.includes(limit) ? limit : DEFAULT_SETTINGS.pdfPageLimit;
+}
+
+function randomAnnouncementSourceId() {
+  try {
+    if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  } catch { /* 旧 WebView 没有 randomUUID */ }
+  return `ann-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function normalizeAnnouncementSource(raw) {
+  const url = String(raw?.url ?? '').trim();
+  const topic = String(raw?.topic ?? '').trim();
+  if (!url && !topic) return null;
+  if (url && !/^https?:\/\//i.test(url)) return null;
+  if (topic && !TOPIC_RE.test(topic)) return null;
+  if (!url) return null;
+  const isDefault = url === DEFAULT_ANNOUNCEMENT_SOURCE.url && topic === DEFAULT_ANNOUNCEMENT_SOURCE.topic;
+  if (isDefault) return null;
+  return {
+    id: String(raw?.id || randomAnnouncementSourceId()),
+    url,
+    topic,
+    name: String(raw?.name ?? '').trim(),
+  };
+}
+
+function normalizeAnnouncementSources(raw) {
+  const out = [];
+  const seen = new Set();
+  for (const item of Array.isArray(raw) ? raw : []) {
+    const source = normalizeAnnouncementSource(item);
+    if (!source) continue;
+    const key = `${source.url}\n${source.topic}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(source);
+  }
+  return out;
+}
+
+function migrateAnnouncementSettings(settings) {
+  const next = { ...settings };
+  const migrated = normalizeAnnouncementSources(next.annSources);
+  if (!migrated.length && (next.annUrl || next.annTopic)) {
+    const legacy = normalizeAnnouncementSource({
+      url: next.annUrl,
+      topic: next.annTopic,
+      name: '旧公告源',
+    });
+    if (legacy) migrated.push(legacy);
+  }
+  next.annSources = migrated;
+  // 旧字段只用于一次迁移，避免备份里继续暴露成“单源设置”。
+  next.annUrl = '';
+  next.annTopic = '';
+  return next;
 }
 
 // ================================================================ 工具
@@ -150,7 +214,7 @@ function loadState() {
       announcements: Array.isArray(o.announcements) ? o.announcements : [],
       localAnnouncements: Array.isArray(o.localAnnouncements) ? o.localAnnouncements : [],
       announcementsFetchedAt: o.announcementsFetchedAt ?? '',
-      settings: { ...DEFAULT_SETTINGS, ...(o.settings ?? {}) },
+      settings: migrateAnnouncementSettings({ ...DEFAULT_SETTINGS, ...(o.settings ?? {}) }),
       assistantCurrent: o.assistantCurrent ?? null,
       assistantHistory: Array.isArray(o.assistantHistory) ? o.assistantHistory : [],
     };
@@ -1329,6 +1393,29 @@ function annAll() {
   return mergeAnnouncements(state.announcements, state.localAnnouncements);
 }
 
+function allAnnouncementSources() {
+  return [DEFAULT_ANNOUNCEMENT_SOURCE, ...normalizeAnnouncementSources(state.settings.annSources)];
+}
+
+function customAnnouncementSources() {
+  return normalizeAnnouncementSources(state.settings.annSources);
+}
+
+function sourceAnnouncementList(data, source) {
+  const list = normalizeAnnouncements(data);
+  return list.map((a) => ({
+    ...a,
+    // 不同公告源可能使用相同的 id，合并前必须隔离来源。
+    id: `${source.id}:${a.id}`,
+    sourceId: source.id,
+    sourceName: source.name || '',
+  }));
+}
+
+function sourceLabel(source) {
+  return source.name || source.topic || source.url.replace(/^https?:\/\//i, '').slice(0, 48);
+}
+
 function renderAnnouncements() {
   const box = $('annList');
   box.replaceChildren();
@@ -1336,8 +1423,8 @@ function renderAnnouncements() {
 
   if (!list.length) {
     box.append(h('div', { class: 'empty' }, h('b', {}, '暂时没有公告'),
-      !state.settings.annUrl
-        ? '还没设置公告源。到「设置 → 公告源」粘贴班级里发的那串分享码。'
+      allAnnouncementSources().length <= 1
+        ? '内置公告源暂时没有返回内容，或者网络不通。'
         : '公告源没有返回内容，或者网络不通。'));
     return;
   }
@@ -2013,34 +2100,43 @@ function modalAnnouncement(a) {
 }
 
 async function refreshAnnouncements(quiet = false) {
-  const url = state.settings.annUrl?.trim();
-  if (!url) {
-    if (!quiet) toast('还没设置公告源');
+  const sources = allAnnouncementSources().filter((source) => source.url);
+  const before = new Set(state.announcements.map((a) => String(a.id)));
+  const results = await Promise.allSettled(sources.map(async (source) => {
+    const res = await fetch(source.url, { cache: 'no-cache' });
+    if (!res.ok) throw new Error(`${sourceLabel(source)} HTTP ${res.status}`);
+    return { sourceId: source.id, list: sourceAnnouncementList(await res.json(), source) };
+  }));
+  const successful = results.filter((r) => r.status === 'fulfilled');
+  if (!successful.length) {
+    const reason = results.find((r) => r.status === 'rejected')?.reason;
+    if (!quiet) toast('公告拉取失败：' + (reason?.message || '网络不通'));
+    console.warn('公告拉取失败', reason);
+    renderAnnSrcStatus();
     return;
   }
-  try {
-    const res = await fetch(url, { cache: 'no-cache' });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const data = await res.json();
-    const before = new Set(state.announcements.map((a) => String(a.id)));
-    state.announcements = normalizeAnnouncements(data);
-    state.announcementsFetchedAt = new Date().toISOString();
-    saveState();
-    // 设置页那行状态要跟着走：不重画的话，保存后它永远停在「还没成功拉到过」，
-    // 用户看不出到底通没通（实测踩过）。
-    renderAnnSrcStatus();
-    if (ui.view === 'ann') renderAnnouncements();
-    updateBadges();
-    if (!quiet) toast(`公告已更新（${annAll().length} 条）`);
-    // 首次拉取（before 为空）不弹通知 —— 否则刚装上应用就被历史公告刷屏。
-    // 之后每次发现新 id 才弹。
-    if (before.size) {
-      const fresh = state.announcements.filter((a) => !before.has(String(a.id)));
-      if (fresh.length) notifyNewAnnouncements(fresh);
-    }
-  } catch (e) {
-    if (!quiet) toast('公告拉取失败：' + e.message);
-    console.warn('公告拉取失败', e);
+  const successfulIds = new Set(successful.map((r) => r.value.sourceId));
+  const failedIds = new Set(
+    sources
+      .filter((source) => !successfulIds.has(source.id))
+      .map((source) => source.id),
+  );
+  // 某个自定义源临时断网时保留它上次成功拉到的内容，避免一场短暂断网把公告页清空。
+  const retained = state.announcements.filter((a) => failedIds.has(a.sourceId));
+  state.announcements = [...successful.flatMap((r) => r.value.list), ...retained].sort(annCompare);
+  state.announcementsFetchedAt = new Date().toISOString();
+  saveState();
+  renderAnnSrcStatus();
+  if (ui.view === 'ann') renderAnnouncements();
+  updateBadges();
+  if (!quiet) {
+    const failed = results.length - successful.length;
+    toast(`公告已更新（${annAll().length} 条${failed ? `，${failed} 个源失败` : ''}）`);
+  }
+  // 首次拉取不弹通知，后续只对合并后的新公告提醒。
+  if (before.size) {
+    const fresh = state.announcements.filter((a) => !before.has(String(a.id)));
+    if (fresh.length) notifyNewAnnouncements(fresh);
   }
 }
 
@@ -2084,8 +2180,8 @@ function notifyNewAnnouncements(fresh) {
 
 // ---------------------------------------------------------------- 推送订阅
 
-let annSse = null;    // 当前的 EventSource
-let annSseTries = 0;  // 连续失败次数，用来退避
+let annSse = [];      // 当前的 EventSource 列表
+const annSseTries = new Map();
 
 /**
  * 订阅 ntfy 频道，只为「响一声」。
@@ -2095,32 +2191,33 @@ let annSseTries = 0;  // 连续失败次数，用来退避
  * 也只能让用户多刷一次公告，注入不了任何文字 —— 公告内容的唯一来源永远是那个 JSON。
  */
 function subscribeAnnouncePush() {
-  const topic = String(state.settings.annTopic ?? '').trim();
-  if (annSse) { try { annSse.close(); } catch { /* 已经关了 */ } annSse = null; }
-  if (!topic || !TOPIC_RE.test(topic)) return;
-  if (typeof EventSource === 'undefined') return; // file:// 或老浏览器：只靠轮询
-
-  let es;
-  try {
-    es = new EventSource(ntfySseUrl(topic));
-  } catch (e) {
-    console.warn('订阅推送失败', e);
-    return;
+  for (const es of annSse) { try { es.close(); } catch { /* 已经关了 */ } }
+  annSse = [];
+  if (typeof EventSource === 'undefined') return;
+  for (const source of allAnnouncementSources().filter((item) => item.topic && TOPIC_RE.test(item.topic))) {
+    let es;
+    try {
+      es = new EventSource(ntfySseUrl(source.topic));
+    } catch (e) {
+      console.warn('订阅推送失败', sourceLabel(source), e);
+      continue;
+    }
+    es.__ysSourceId = source.id;
+    annSse.push(es);
+    annSseTries.set(source.id, 0);
+    es.addEventListener('open', () => annSseTries.set(source.id, 0));
+    es.addEventListener('message', () => refreshAnnouncements(true));
+    es.addEventListener('error', () => {
+      try { es.close(); } catch { /* 忽略 */ }
+      annSse = annSse.filter((item) => item !== es);
+      const tries = Math.min((annSseTries.get(source.id) || 0) + 1, 6);
+      annSseTries.set(source.id, tries);
+      const delay = Math.min(30000, 2000 * 2 ** (tries - 1));
+      setTimeout(() => {
+        if (!annSse.some((item) => item && item.__ysSourceId === source.id)) subscribeAnnouncePush();
+      }, delay);
+    });
   }
-  annSse = es;
-
-  es.addEventListener('open', () => { annSseTries = 0; });
-  es.addEventListener('message', () => refreshAnnouncements(true));
-  es.addEventListener('error', () => {
-    // EventSource 自带重连，但断网时会疯狂重试 —— 自己接管，做指数退避
-    try { es.close(); } catch { /* 忽略 */ }
-    if (annSse === es) annSse = null;
-    annSseTries = Math.min(annSseTries + 1, 6);
-    const delay = Math.min(30000, 2000 * 2 ** (annSseTries - 1));
-    setTimeout(() => {
-      if (!annSse && state.settings.annTopic) subscribeAnnouncePush();
-    }, delay);
-  });
 }
 
 /**
@@ -2136,9 +2233,13 @@ function subscribeAnnouncePush() {
 function pushAnnToShell() {
   const shell = globalThis.YangShanShell;
   if (!shell || typeof shell.setAnnPush !== 'function') return;
-  const { annTopic, annUrl } = state.settings;
+  const sources = allAnnouncementSources().map((source) => ({
+    id: source.id,
+    topic: source.topic,
+    url: source.url,
+  }));
   try {
-    shell.setAnnPush(String(annTopic ?? '').trim(), String(annUrl ?? '').trim(), NTFY_BASE);
+    shell.setAnnPush(sources, NTFY_BASE);
   } catch (e) {
     console.warn('下发推送配置失败', e);
   }
@@ -2225,22 +2326,50 @@ async function importLocalAnnouncements(file) {
 function renderAnnSrcStatus() {
   const el = $('annSrcStatus');
   if (!el) return;
-  const { annUrl, annTopic } = state.settings;
-  if (!annUrl && !annTopic) {
-    el.textContent = '还没设置。';
-    return;
-  }
+  const custom = customAnnouncementSources();
   const parts = [];
-  if (annUrl) parts.push('公告地址已设置');
-  else parts.push('⚠️ 只有推送频道，没有公告地址');
-  if (annTopic) parts.push(`推送频道 ${annTopic}`);
-  else parts.push('没有推送频道（只有轮询）');
+  parts.push('内置公告源已启用');
+  parts.push(custom.length ? `已添加 ${custom.length} 个自定义源` : '还没有自定义源');
   // 只有原生壳（安卓）才有「后台推送」这件事。null = 跑在浏览器里，不用提。
   if (shellAnnPush === true) parts.push('后台推送已开启（关掉 App 也能收到）');
-  else if (shellAnnPush === false && annTopic) parts.push('⚠️ 后台推送没起来，重开一次 App');
+  else if (shellAnnPush === false) parts.push('⚠️ 后台推送没起来，重开一次 App');
   const at = state.announcementsFetchedAt;
   parts.push(at ? `上次拉到 ${new Date(at).toLocaleString()}` : '还没成功拉到过');
   el.textContent = parts.join(' · ');
+}
+
+function renderAnnSources() {
+  const box = $('annSources');
+  if (!box) return;
+  box.replaceChildren();
+  const sources = customAnnouncementSources();
+  if (!sources.length) {
+    box.append(h('p', { class: 'muted small' }, '暂无自定义公告源。内置学校公告源会自动接收，且不会显示在这里。'));
+    return;
+  }
+  for (const source of sources) {
+    box.append(h('div', { class: 'ann-source-row' },
+      h('div', { class: 'ann-source-info' },
+        h('b', {}, sourceLabel(source)),
+        h('span', { class: 'muted small' }, source.topic ? `频道 ${source.topic}` : source.url),
+      ),
+      h('button', {
+        class: 'danger-btn',
+        type: 'button',
+        title: '删除公告源',
+        onclick: () => {
+          state.settings.annSources = customAnnouncementSources().filter((item) => item.id !== source.id);
+          saveState();
+          renderAnnSources();
+          renderAnnSrcStatus();
+          subscribeAnnouncePush();
+          pushAnnToShell();
+          refreshAnnouncements(true);
+          toast('已删除自定义公告源');
+        },
+      }, '删除'),
+    ));
+  }
 }
 
 function renderLocalCount() {
@@ -3326,7 +3455,12 @@ const firedKeys = new Set();
  */
 function checkReminders() {
   if (!state.settings.inApp) return;
-  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  const shell = globalThis.YangShanShell;
+  const nativeNotifications = Boolean(shell && typeof shell.notify === 'function');
+  const browserNotifications = typeof Notification !== 'undefined' && Notification.permission === 'granted';
+  // Android WebView 没有 Notification API，但原生壳提供了 notify()；不能因为浏览器
+  // 能力不存在就提前 return，否则课前/截止提醒永远不会送到系统通知栏。
+  if (!nativeNotifications && !browserNotifications) return;
 
   const now = new Date();
   const nowMin = now.getHours() * 60 + now.getMinutes();
@@ -3454,9 +3588,26 @@ function bindSettings() {
       toast('解析失败：' + e.message);
       return;
     }
-    st().annUrl = parsed.url;
-    st().annTopic = parsed.topic || '';
+    const source = normalizeAnnouncementSource({
+      id: randomAnnouncementSourceId(),
+      url: parsed.url,
+      topic: parsed.topic || '',
+      name: parsed.name || '',
+    });
+    if (!source) {
+      toast('公告源无效，或不能重复添加内置公告源');
+      return;
+    }
+    const current = customAnnouncementSources();
+    const duplicate = current.some((item) => item.url === source.url && item.topic === source.topic);
+    if (duplicate) {
+      toast('这个公告源已经添加过了');
+      return;
+    }
+    st().annSources = [...current, source];
+    $('setAnnUrl').value = '';
     saveState();
+    renderAnnSources();
     renderAnnSrcStatus();
     subscribeAnnouncePush();
     pushAnnToShell();
@@ -3555,9 +3706,10 @@ function bindSettings() {
   $('setHideWeekend').checked = st().hideWeekend;
   $('setPdfPageLimit').value = String(normalizePdfPageLimit(st().pdfPageLimit));
   renderScheduleChanges();
-  $('setAnnUrl').value = st().annUrl ?? '';
+  $('setAnnUrl').value = '';
   $('setAnnNotify').checked = Boolean(st().annNotify);
   renderAiConfig();
+  renderAnnSources();
   renderAnnSrcStatus();
   renderLocalCount();
 }
@@ -3959,7 +4111,7 @@ async function main() {
   // 公告刷新：打开时拉一次 + 每 15 分钟一次（仅页面可见时）+ 每次切回这个标签页时一次。
   // 页面在后台时不轮询 —— 手机浏览器本来就会冻结后台定时器，与其指望它，
   // 不如把"切回来的那一刻"当成可靠的刷新时机。
-  if (state.settings.annUrl) refreshAnnouncements(true);
+  refreshAnnouncements(true);
   subscribeAnnouncePush();
   // 把频道下发到原生侧（安卓壳会据此起一个前台服务，关掉 App 也收得到），
   // 再回读一次它到底起没起来。
@@ -3974,7 +4126,7 @@ async function main() {
     checkReminders();
     refreshAnnouncements(true);
     // 手机浏览器在后台会掐掉 SSE，切回来的这一刻顺手确认还连着
-    if (state.settings.annTopic && !annSse) subscribeAnnouncePush();
+    if (!annSse.length) subscribeAnnouncePush();
   });
 
   setInterval(() => { renderNowCard(); checkReminders(); }, 60 * 1000);

@@ -342,6 +342,19 @@ t('后台推送的命令名在网页端与安卓壳之间必须一致', () => {
   ok(bridge.includes('onAnnPush'), 'ShellBridge 必须把它交给宿主');
 });
 
+t('公告源支持内置默认源与多个可删除自定义源', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  const template = readFileSync(join(ROOT, 'web/template.html'), 'utf8');
+  const shim = readFileSync(join(ROOT, 'shells/shim.js'), 'utf8');
+  ok(app.includes('DEFAULT_ANNOUNCEMENT_SOURCE'), '网页端必须内置默认公告源');
+  ok(app.includes('annSources'), '设置必须保存多个自定义公告源');
+  ok(app.includes('allAnnouncementSources'), '刷新与推送必须合并内置源和自定义源');
+  ok(app.includes('Promise.allSettled'), '多个公告源应互不阻塞地并行拉取');
+  ok(app.includes('renderAnnSources'), '设置页必须渲染自定义公告源列表');
+  ok(template.includes('id="annSources"'), '设置页必须有自定义公告源容器');
+  ok(shim.includes('Array.isArray(sources)'), '壳桥接必须传递公告源数组');
+});
+
 t('安卓壳必须声明公告推送的前台服务与开机恢复', () => {
   const mf = readFileSync(
     join(ROOT, 'shells/android/app/src/main/AndroidManifest.xml'),
@@ -411,6 +424,20 @@ t('安卓后台推送只在通知权限真实可用时报告 active', () => {
   ok(start.includes('startForeground('), '通知被关掉时也要真的调一次 startForeground');
   ok(start.includes('stopForeground(STOP_FOREGROUND_REMOVE)'), '调完立刻撤掉前台身份');
   ok(/if \(allowed\) \{\s*true\s*\} else \{/.test(start), '通知不可用时仍然要返回 false，不能假报服务已运行');
+});
+
+t('课前和待办截止提醒必须支持安卓原生通知', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  const main = readFileSync(
+    join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/MainActivity.kt'),
+    'utf8',
+  );
+  ok(app.includes('nativeNotifications'), '提醒逻辑必须探测原生通知能力');
+  ok(app.includes('shell.notify(title, body)'), '提醒必须能走原生壳通知');
+  ok(app.includes('const alarm = Number(state.settings.alarm)'), '必须检查上课提前提醒设置');
+  ok(app.includes('const lead = Number(state.settings.todoAlarm'), '必须检查待办截止提醒设置');
+  ok(main.includes('override fun onNotify'), '安卓壳必须接收网页提醒');
+  ok(main.includes('Notify.show(this'), '安卓壳必须把网页提醒发到系统通知栏');
 });
 
 t('推送载荷一律不可信：通知正文只能来自公告 JSON', () => {
@@ -2412,11 +2439,16 @@ t('UA 里的版本号必须来自 BuildConfig，不能手写', () => {
   ok(!/YangShanShell\/\d+\.\d+\.\d+/.test(src), '不能手写版本号 —— 写死过 0.2.0，而全局那时是 0.1.9');
 });
 
-t('README 必须写明「智能助手」是唯一的联网功能', () => {
+t('README 必须把所有联网出口都写出来（公告源 + 智能助手），不能只说一半', () => {
   const md = readFileSync(join(ROOT, 'README.md'), 'utf8');
-  ok(/智能助手：唯一的联网功能/.test(md), 'README 必须有这一节，否则「没有服务器」是误导');
-  ok(/api\.deepseek\.com/.test(md), '要写清默认发给谁');
+  // 联网出口只有两处：默认开启的公告源、用户主动使用的智能助手。两者写在同一条里，
+  // 否则「没有服务器」「唯一的联网功能」都会变成误导 —— 内置公告源是默认就会发请求的。
+  ok(/联网只有两处/.test(md), 'README 必须把联网出口数清楚，不能只说其中一个');
+  ok(/公告源/.test(md) && /data\/announcements\.json/.test(md), '要写清默认拉哪个公告 JSON');
+  ok(/纯 GET/.test(md), '要说明拉公告是只读的、不带本机数据');
+  ok(/api\.deepseek\.com/.test(md), '要写清助手默认发给谁');
   ok(/settingsForBackup/.test(md), '要写清备份里会剔掉 Key');
+  ok(!/智能助手：唯一的联网功能/.test(md), '内置公告源默认就会联网，再说「唯一」就是假话');
   ok(!/课表和账号密码永远不离开你自己的设备/.test(md), '「永远不离开」是错的 —— 助手会把材料发出去');
 });
 

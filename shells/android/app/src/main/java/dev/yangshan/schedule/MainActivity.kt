@@ -424,13 +424,12 @@ class MainActivity : Activity(), ShellBridge.Host {
      * 单向：不回包。成功与否由下一次 `status` 的 `annPush` 字段说话 ——
      * 前台服务是异步起来的，此刻回「成功」是不诚实。
      */
-    override fun onAnnPush(topic: String?, annUrl: String?, base: String?) {
-        val t = topic.orEmpty().trim()
-        if (t.isBlank()) {
+    override fun onAnnPush(sourcesJson: String?, base: String?) {
+        if (sourcesJson.isNullOrBlank()) {
             AnnPush.clear(this)
             return
         }
-        AnnPush.save(this, t, annUrl.orEmpty(), base.orEmpty())
+        AnnPush.save(this, sourcesJson, base.orEmpty())
     }
 
     // ── 抓取回来的路上 ──────────────────────────────────────────────────────

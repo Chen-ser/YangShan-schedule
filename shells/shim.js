@@ -80,8 +80,9 @@
     // 单向、不回包：前台服务是异步起来的，此刻回“成功”是不诚实 ——
     // 真实状态由 status() 的 annPush 字段说话。
     // Windows 壳不认这条命令，会直接忽略（它没有后台推送这件事）。
-    setAnnPush: function (topic, annUrl, base) {
-      post({ cmd: 'annpush', topic: topic || '', annUrl: annUrl || '', base: base || '' });
+    setAnnPush: function (sources, base) {
+      // sources 是 [{id, topic, url}]；保留数组形状，安卓壳可按源分别监听和去重。
+      post({ cmd: 'annpush', sources: Array.isArray(sources) ? sources : [], base: base || '' });
     }
   };
 })();

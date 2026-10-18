@@ -71,7 +71,7 @@ class AnnPushService : Service() {
     @Volatile
     private var running = false
 
-    private var worker: Thread? = null
+    private val workers = mutableListOf<Thread>()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -135,16 +135,21 @@ class AnnPushService : Service() {
     private fun startLoop() {
         if (running) return
         running = true
-        worker = thread(name = "ys-ann-push", isDaemon = true) { loop() }
+        synchronized(workers) {
+            workers.clear()
+            for (source in AnnPush.sources(this)) {
+                workers += thread(name = "ys-ann-${source.id}", isDaemon = true) {
+                    loop(source)
+                }
+            }
+        }
     }
 
-    private fun loop() {
+    private fun loop(source: AnnPush.Source) {
         var backoff = BACKOFF_MIN
         while (running) {
-            val topic = AnnPush.topic(this)
-            if (topic.isBlank()) break
             try {
-                listen(topic)
+                listen(source)
                 // 正常返回说明连接被对端关了（ntfy 会定期断开）。不算失败，立刻重连。
                 backoff = BACKOFF_MIN
             } catch (e: Exception) {
@@ -153,13 +158,15 @@ class AnnPushService : Service() {
                 backoff = (backoff * 2).coerceAtMost(BACKOFF_MAX)
             }
         }
-        if (running) stopSelf()
+        if (running && AnnPush.sources(this).none { it.id == source.id }) {
+            stopSelf()
+        }
     }
 
     /** 一条 SSE 长连接。阻塞直到断开或收到停止信号。 */
-    private fun listen(topic: String) {
+    private fun listen(source: AnnPush.Source) {
         val base = AnnPush.base(this).trimEnd('/')
-        val url = URL("$base/$topic/sse")
+        val url = URL("$base/${source.topic}/sse")
         val conn = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = CONNECT_TIMEOUT
@@ -180,7 +187,7 @@ class AnnPushService : Service() {
                     if (!line.startsWith("data:")) continue
                     val payload = line.removePrefix("data:").trim()
                     if (payload.isEmpty()) continue
-                    if (isMessage(payload)) onDoorbell()
+                    if (isMessage(payload)) onDoorbell(source)
                 }
             }
         } finally {
@@ -203,10 +210,10 @@ class AnnPushService : Service() {
     }
 
     /** 门铃响了：去把真正的公告拉回来，然后弹一条通知。 */
-    private fun onDoorbell() {
+    private fun onDoorbell(source: AnnPush.Source) {
         // App 就在前台时，网页端自己会弹（还带点进去看详情的行为），这里让位。
         if (AnnPush.appVisible) return
-        val result = latestAnnouncement()
+        val result = latestAnnouncement(source)
         when (result.status) {
             AnnouncementStatus.FRESH ->
                 Notify.showAnnouncement(this, result.id, result.title, result.body)
@@ -224,8 +231,8 @@ class AnnPushService : Service() {
      * 很久以前那条（比如「本课程群规」）。用第一条的话，管理员再发新公告时
      * 排在最前的还是它 —— 我们就永远弹不出新东西。
      */
-    private fun latestAnnouncement(): AnnouncementLookup {
-        val url = AnnPush.annUrl(this)
+    private fun latestAnnouncement(source: AnnPush.Source): AnnouncementLookup {
+        val url = source.url.ifBlank { AnnPush.annUrl(this) }
         if (url.isBlank()) return AnnouncementLookup(AnnouncementStatus.UNAVAILABLE)
 
         val body = try {
@@ -259,8 +266,8 @@ class AnnPushService : Service() {
         val a = best ?: return AnnouncementLookup(AnnouncementStatus.UNAVAILABLE)
         val id = a.optString("id").ifBlank { a.optString("title").ifBlank { "ys-ann" } }
         // 同一条公告只弹一次。重连、重启、切频道都不会重复打扰。
-        if (id == AnnPush.lastId(this)) return AnnouncementLookup(AnnouncementStatus.NO_NEW)
-        AnnPush.setLastId(this, id)
+        if (id == AnnPush.lastId(this, source.id)) return AnnouncementLookup(AnnouncementStatus.NO_NEW)
+        AnnPush.setLastId(this, source.id, id)
 
         val title = a.optString("title").ifBlank { "有新公告" }
         val text = a.optString("body")
@@ -316,8 +323,10 @@ class AnnPushService : Service() {
     override fun onDestroy() {
         running = false
         active = false
-        worker?.interrupt()
-        worker = null
+        synchronized(workers) {
+            workers.forEach { it.interrupt() }
+            workers.clear()
+        }
         super.onDestroy()
     }
 

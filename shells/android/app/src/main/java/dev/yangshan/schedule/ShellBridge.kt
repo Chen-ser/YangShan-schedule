@@ -25,7 +25,7 @@ class ShellBridge(private val host: Host) {
         fun onNotify(title: String?, body: String?)
         fun onRequestNotifications(id: String)
         fun onOpen(url: String?)
-        fun onAnnPush(topic: String?, annUrl: String?, base: String?)
+        fun onAnnPush(sourcesJson: String?, base: String?)
     }
 
     @JavascriptInterface
@@ -50,8 +50,7 @@ class ShellBridge(private val host: Host) {
             "open" -> host.onOpen(m.stringOrNull("url"))
             // 没有回包：这是单向的设置下发。成功与否由 status 的 annPush 字段反映。
             "annpush" -> host.onAnnPush(
-                m.stringOrNull("topic"),
-                m.stringOrNull("annUrl"),
+                m.optJSONArray("sources")?.toString() ?: "[]",
                 m.stringOrNull("base"),
             )
         }

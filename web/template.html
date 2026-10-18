@@ -196,8 +196,8 @@
           <input type="checkbox" id="setInApp">
         </label>
         <p class="muted small">
-          系统日历订阅（.ics）自带提醒最可靠。若要应用内提醒，本页面必须开着，
-          手机浏览器不会让网页在后台定时唤醒 —— 这是浏览器的硬限制，不是本应用的缺陷。
+          安卓版会把提醒送到系统通知栏；网页版需要保持页面打开。系统日历订阅（.ics）自带提醒最可靠。
+          手机浏览器不会让网页在后台定时唤醒，这是浏览器的硬限制。
         </p>
       </div>
 
@@ -261,7 +261,8 @@
           只填一个 announcements.json 的网址也可以，那样能看公告、但没有推送。
         </p>
         <input type="text" id="setAnnUrl" class="text-input" placeholder="YSA1-… 或 https://example.com/announcements.json">
-        <div class="btn-row"><button class="ghost-btn" id="btnSaveAnnUrl">保存并刷新</button><button class="ghost-btn" id="btnAnnExample">格式示例</button></div>
+        <div class="btn-row"><button class="ghost-btn" id="btnSaveAnnUrl">添加公告源</button><button class="ghost-btn" id="btnAnnExample">格式示例</button></div>
+        <div id="annSources"></div>
         <p class="muted small" id="annSrcStatus"></p>
       </div>
 

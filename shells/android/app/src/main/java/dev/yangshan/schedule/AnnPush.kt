@@ -3,6 +3,8 @@ package dev.yangshan.schedule
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * 公告推送的原生侧配置与开关。
@@ -17,11 +19,18 @@ import android.os.Build
  */
 object AnnPush {
 
+    data class Source(
+        val id: String,
+        val topic: String,
+        val url: String,
+    )
+
     private const val FILE = "yangshan_ann"
     private const val K_TOPIC = "topic"
     private const val K_URL = "url"
     private const val K_BASE = "base"
     private const val K_LAST = "lastId"
+    private const val K_SOURCES = "sources"
 
     const val DEFAULT_BASE = "https://ntfy.sh"
 
@@ -32,33 +41,82 @@ object AnnPush {
     private fun prefs(ctx: Context) =
         ctx.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
-    fun topic(ctx: Context): String = prefs(ctx).getString(K_TOPIC, "").orEmpty()
+    fun sources(ctx: Context): List<Source> {
+        val p = prefs(ctx)
+        val raw = p.getString(K_SOURCES, "").orEmpty()
+        if (raw.isNotBlank()) {
+            try {
+                val arr = JSONArray(raw)
+                return (0 until arr.length()).mapNotNull { i ->
+                    val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                    val id = o.optString("id").trim()
+                    val topic = o.optString("topic").trim()
+                    val url = o.optString("url").trim()
+                    if (id.isBlank() || topic.isBlank() || url.isBlank()) null else Source(id, topic, url)
+                }
+            } catch (_: Exception) {
+                // 坏配置按旧格式尝试恢复，随后 save 会覆盖它。
+            }
+        }
+        val topic = p.getString(K_TOPIC, "").orEmpty().trim()
+        val url = p.getString(K_URL, "").orEmpty().trim()
+        return if (topic.isNotBlank() && url.isNotBlank()) listOf(Source("legacy", topic, url)) else emptyList()
+    }
 
-    fun annUrl(ctx: Context): String = prefs(ctx).getString(K_URL, "").orEmpty()
+    /** 旧单源 API 留着给升级兼容和现有静态检查使用。 */
+    fun topic(ctx: Context): String = sources(ctx).firstOrNull()?.topic.orEmpty()
+
+    fun annUrl(ctx: Context): String = sources(ctx).firstOrNull()?.url.orEmpty()
 
     fun base(ctx: Context): String =
         prefs(ctx).getString(K_BASE, DEFAULT_BASE).orEmpty().ifBlank { DEFAULT_BASE }
 
     /** 上一次已经弹过通知的公告 id —— 用来去重，避免重连后重复打扰。 */
-    fun lastId(ctx: Context): String = prefs(ctx).getString(K_LAST, "").orEmpty()
-
-    fun setLastId(ctx: Context, id: String) {
-        prefs(ctx).edit().putString(K_LAST, id).apply()
+    fun lastId(ctx: Context, sourceId: String = "legacy"): String {
+        val raw = prefs(ctx).getString(K_LAST, "").orEmpty()
+        if (raw.isBlank()) return ""
+        return try { JSONObject(raw).optString(sourceId) } catch (_: Exception) { raw }
     }
 
-    fun enabled(ctx: Context): Boolean = topic(ctx).isNotBlank()
+    fun setLastId(ctx: Context, sourceId: String, id: String) {
+        val p = prefs(ctx)
+        val raw = p.getString(K_LAST, "").orEmpty()
+        val o = try { if (raw.isBlank()) JSONObject() else JSONObject(raw) } catch (_: Exception) { JSONObject() }
+        o.put(sourceId, id)
+        p.edit().putString(K_LAST, o.toString()).apply()
+    }
+
+    fun enabled(ctx: Context): Boolean = sources(ctx).isNotEmpty()
 
     /** 写入频道与公告地址，并相应地起停服务。 */
-    fun save(ctx: Context, topic: String, annUrl: String, base: String) {
-        val t = topic.trim()
-        val old = topic(ctx)
+    fun save(ctx: Context, sourcesJson: String, base: String) {
+        val next = try {
+            val arr = JSONArray(sourcesJson)
+            JSONArray().also { out ->
+                for (i in 0 until arr.length()) {
+                    val item = arr.optJSONObject(i) ?: continue
+                    val id = item.optString("id").trim()
+                    val topic = item.optString("topic").trim()
+                    val url = item.optString("url").trim()
+                    if (id.isNotBlank() && topic.isNotBlank() && url.isNotBlank()) {
+                        out.put(JSONObject().put("id", id).put("topic", topic).put("url", url))
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            JSONArray()
+        }
+        val oldJson = prefs(ctx).getString(K_SOURCES, "").orEmpty()
         prefs(ctx).edit()
-            .putString(K_TOPIC, t)
-            .putString(K_URL, annUrl.trim())
+            .putString(K_SOURCES, next.toString())
+            // 旧键清掉，避免下次升级又被误判为旧配置。
+            .remove(K_TOPIC)
+            .remove(K_URL)
             .putString(K_BASE, base.trim().ifBlank { DEFAULT_BASE })
             .apply()
-        // 换了频道就等于换了身份：旧的已读记录留着会吞掉新频道的第一条公告。
-        if (t != old) prefs(ctx).edit().remove(K_LAST).apply()
+        if (next.toString() != oldJson) prefs(ctx).edit().remove(K_LAST).apply()
+        // 配置变化时重启监听线程，确保新增/删除的源立即生效。
+        stop(ctx)
         apply(ctx)
     }
 
