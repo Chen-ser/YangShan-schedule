@@ -50,6 +50,12 @@ shells/android/local.properties
 shells/android/**/*.apk
 shells/android/**/*.aab
 
+# ── 签名钥匙：任何位置都不进仓库 ──────────────────────────────────────────
+# 这是分发用的签名身份，谁拿到它谁就能签出一个「看起来是官方」的包。
+# 路径与口令写在 shells/android/local.properties（上面也挡了），钥匙文件放仓库外。
+*.keystore
+*.jks
+
 # ── OCR 资产：本地跑 tools/fetch-ocr.mjs 生成，仓库决定提交（见 README）────
 # 若不提交，把下面这行取消注释即可。
 # vendor/ocr/

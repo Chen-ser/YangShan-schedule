@@ -49,6 +49,38 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 sdk.dir=C\:\\Program Files (x86)\\Android\\android-sdk
 ```
 
+### 签名：必须固定同一把钥匙
+
+已经装过旧版的手机**只能升级、不能覆盖安装**：Android 要求新旧 APK 的签名证书相同，
+否则 `adb install` 报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`，点开装包则提示「应用未安装」。
+
+而调试签名默认是「这台机器第一次构建时随机生成一把」，位置是
+`$ANDROID_USER_HOME/debug.keystore`（默认 `%USERPROFILE%\.android\debug.keystore`）。
+换机器、换 `ANDROID_USER_HOME`，就换了一把钥匙 —— 同一份源码会打出装不上去的包。
+
+所以这里允许把钥匙钉死（`app/build.gradle.kts` 的 `signingConfigs` 会读下面两项）：
+
+```properties
+# 用正斜杠：properties 文件里反斜杠是转义符，\d 会被吃成 d
+yangshan.keystore=D:/某个不进仓库的目录/yangshan-debug.keystore
+# 口令与别名默认就是调试签名的 android / androiddebugkey，需要时才写
+```
+
+没写这一项（或文件不在）时，照旧回落到本机默认的调试签名 —— 换台机器也能构建，只是签名不同。
+
+**钥匙本身永远不进仓库**：这是分发用的签名身份，谁拿到它谁就能签出一个「看起来是官方」的包。
+`.gitignore` 已挡掉 `local.properties` 与 `*.keystore`。
+
+历史包袱一句：2026-10-18 的 r15 包（证书 SHA-256 `a0685b86…276864`）用的是别人环境里的
+一把临时调试钥匙，换成新钥匙之前打出来的包（`14815302…6a7754`）装不到 r15 上面。
+现在 `local.properties` 已指向 r15 那把的副本，重新构建就能直接覆盖安装。
+
+验签一条命令：
+
+```bash
+$ANDROID_HOME/build-tools/36.0.0/apksigner verify --print-certs app/build/outputs/apk/debug/app-debug.apk
+```
+
 ### 换一台机器构建时最容易卡住的两件事
 
 1. **`Gradle` 从哪来。** `services.gradle.org` 的下载链接会 307 跳到 GitHub Releases，

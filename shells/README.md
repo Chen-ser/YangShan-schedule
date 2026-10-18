@@ -129,6 +129,32 @@ cd shells\windows
 `build.ps1` 刻意**只用 ASCII**：PowerShell 5.1 读没有 BOM 的 `.ps1` 会按 ANSI(GBK) 解码，
 中文字面量会变成乱码。所以脚本里不写「仰山课表.html」，改用 `Get-ChildItem dist -Filter *.html` 拿文件名。
 
+### 便携版打包（不做安装器）
+
+对外只发一个 zip：解压 → 双击 `YangShanShell.exe`，不安装、不写注册表、不要 .NET 运行时。
+`install.ps1` / `installer.cmd` / `uninstall.ps1` 留在仓库里备查（想装进「应用和功能」才用），
+打给用户的包里**不放**。
+
+```powershell
+# out\ 里的是框架依赖版（要求目标机装了 .NET 10 桌面运行时），只适合本机自测；
+# 发出去的那份必须自带运行时：
+dotnet publish YangShanShell.csproj -c Release -r win-x64 --self-contained true `
+  -p:PublishTrimmed=false -p:DebugType=none -p:RestoreSources="https://api.nuget.org/v3/index.json" -o ..\..\_pkg\YangShanSchedule
+```
+
+几个必须知道的点：
+
+- **`-p:RestoreSources` 不能省。** `NuGet.config` 里 `<clear />` 了所有源、只留本地 `feed/`，
+  而 `feed/` 只有 WebView2 的 .nupkg —— 自包含发布要的
+  `Microsoft.WindowsDesktop.App.Runtime.win-x64` 在那里找不到，报 `NU1101`。
+- **体积换来的确定性**：自包含产物 124 MB（227 个文件），zip 后约 53 MB。
+  换来的是「目标机不需要装 .NET」。
+- **数据不在程序目录**：`Shell.ResolveDataRoot` 首选 `%LOCALAPPDATA%\YangShanSchedule`，
+  所以解压到 U 盘、桌面、只读目录都能跑。删文件夹 = 卸载，数据另删。
+- **WebView2 运行时仍然是系统组件**：Windows 11 自带，Windows 10 装过新版 Edge 就有。
+  自包含只解决 .NET，解决不了这个。
+- 不要用 `PublishTrimmed`：WinForms 靠反射找类型，裁剪后运行时才炸。
+
 ### 自检（两个，都不用看界面）
 
 ```powershell

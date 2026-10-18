@@ -2702,6 +2702,30 @@ t('管理页：草稿不会因为刷新页面或点「测试连接并读取」�
   ok(test.includes('localOnly'), '读取远端后要把本机还没提交的公告并回去');
 });
 
+t('安卓签名必须能钉死在 local.properties 里的那把钥匙上（否则升级装不上）', () => {
+  const gradle = readFileSync(join(ROOT, 'shells/android/app/build.gradle.kts'), 'utf8');
+  ok(gradle.includes('signingConfigs'), '要在 signingConfigs 里覆盖 debug 签名，不能只靠默认的随机钥匙');
+  ok(gradle.includes('yangshan.keystore'), '钥匙路径要从 local.properties 读，别写死在构建脚本里');
+  ok(gradle.includes('storeFile = sharedKeystore'), '读到路径时要真的应用到 debug 签名配置上');
+  ok(/reader\(Charsets\.UTF_8\)/.test(gradle),
+    '要用 UTF-8 Reader 读 local.properties —— 默认的 load(InputStream) 会按 ISO-8859-1 读，中文路径变乱码');
+  ok(gradle.includes('takeIf { it.exists() }'), '钥匙不存在时要能回落，别让换台机器直接构建失败');
+  const ignores = readFileSync(join(ROOT, '.gitignore'), 'utf8');
+  ok(ignores.includes('shells/android/local.properties'), 'local.properties 必须挡在仓库外（里面有钥匙路径）');
+  ok(/^\*\.keystore$/m.test(ignores), '签名钥匙（*.keystore）永远不进货架：谁拿到它谁就能签官方包');
+});
+
+t('Windows 对外发的是「解压即用」的便携包，不是安装器', () => {
+  const doc = readFileSync(join(ROOT, 'shells/README.md'), 'utf8');
+  const sec = doc.slice(doc.indexOf('### 便携版打包'), doc.indexOf('### 自检'));
+  ok(sec.length > 200, 'shells/README.md 要有「便携版打包」一节，写清对外发什么');
+  ok(sec.includes('--self-contained true'), '便携包必须自带 .NET 运行时，否则目标机双击打不开');
+  ok(sec.includes('-p:RestoreSources'), '要写清 RestoreSources 覆盖 NuGet.config 的 <clear />，否则报 NU1101');
+  ok(!/PublishTrimmed=true/.test(sec), 'WinForms 不能裁剪');
+  ok(sec.includes('%LOCALAPPDATA%\\YangShanSchedule'), '要说清数据不在程序目录（解压到 U 盘也能跑）');
+  ok(sec.includes('WebView2'), '自包含只解决 .NET，WebView2 仍是系统组件，必须写明');
+});
+
 const total = pass + failures.length;
 console.log('');
 if (failures.length) {

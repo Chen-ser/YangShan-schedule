@@ -1,11 +1,46 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
 
+// ── 签名 ────────────────────────────────────────────────────────────────────
+// 已经装过旧版的手机只能升级不能覆盖安装：Android 要求新旧 APK 的签名证书相同，
+// 否则报 INSTALL_FAILED_UPDATE_INCOMPATIBLE。而调试签名默认是「这台机器第一次构建时
+// 随机生成一把」（ANDROID_USER_HOME/debug.keystore），换机器、换 ANDROID_USER_HOME
+// 就换了一把钥匙 —— 同一份源码会打出装不上去的 APK。
+//
+// 所以这里允许把钥匙固定下来：在 local.properties（已在 gitignore 里）写
+//     yangshan.keystore=D:\\某个不进仓库的目录\\yangshan-debug.keystore
+// 就固定用它；没写或文件不在，就照旧回落到本机默认的调试签名（换台机器也能构建）。
+//
+// 钥匙本身永远不进仓库：这是分发用的签名身份，谁拿到它谁就能签一个「看起来是官方」的包。
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    // 用 Reader 按 UTF-8 读：Properties.load(InputStream) 会把非 ASCII 当 ISO-8859-1，
+    // 路径里带中文目录（D:\ds工作区\…）就会被读成乱码。
+    if (f.exists()) f.reader(Charsets.UTF_8).use { load(it) }
+}
+val sharedKeystore = localProps.getProperty("yangshan.keystore")
+    ?.takeIf { it.isNotBlank() }
+    ?.let { file(it) }
+    ?.takeIf { it.exists() }
+
 android {
     namespace = "dev.yangshan.schedule"
     compileSdk = 35
+
+    signingConfigs {
+        getByName("debug") {
+            if (sharedKeystore != null) {
+                storeFile = sharedKeystore
+                storePassword = localProps.getProperty("yangshan.keystore.storePassword") ?: "android"
+                keyAlias = localProps.getProperty("yangshan.keystore.keyAlias") ?: "androiddebugkey"
+                keyPassword = localProps.getProperty("yangshan.keystore.keyPassword") ?: "android"
+            }
+        }
+    }
 
     buildFeatures {
         buildConfig = true
