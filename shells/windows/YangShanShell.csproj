@@ -34,6 +34,14 @@
     <ApplicationDefaultFont>Microsoft YaHei UI, 9pt</ApplicationDefaultFont>
     <ApplicationUseCompatibleTextRendering>false</ApplicationUseCompatibleTextRendering>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
+
+    <!--
+      程序图标：唯一的图标源就是 app.ico（10 种尺寸，16→256），
+      它会被嵌进 exe 的 PE 资源 —— 资源管理器、任务栏、快捷方式、托盘都读这一份。
+      MainForm 里窗口与托盘图标也是从这个 exe 里取回来的，所以不会出现
+      「exe 换了新图标、托盘还是系统默认」这种不一致。
+    -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>

@@ -83,7 +83,7 @@ shells/android/
     └── src/main/
         ├── AndroidManifest.xml
         ├── assets/                 ← prepare-assets.mjs 生成，不入库
-        ├── res/                    字符串、主题、矢量图标
+        ├── res/                    字符串、主题、自适应图标（位图，来源见 ../README.md 的「图标」节）
         └── java/dev/yangshan/schedule/
             ├── MainActivity.kt     内核主窗口 + 壳接口的安卓侧实现
             ├── SchoolActivity.kt   教务窗口（平时自己关掉，只在要人过验证码时露出来）

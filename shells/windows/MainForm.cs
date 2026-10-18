@@ -39,9 +39,14 @@ internal sealed class MainForm : Form
 
         Controls.Add(_web);
 
+        // 窗口与托盘共用一个图标，来源是 exe 里嵌的那份 app.ico（见 csproj 的 <ApplicationIcon>）。
+        // 之前托盘写死 SystemIcons.Application，exe 换成品牌图标后托盘会一直是系统默认的那个。
+        var appIcon = Icon.ExtractAssociatedIcon(Environment.ProcessPath ?? Application.ExecutablePath);
+        if (appIcon is not null) Icon = appIcon;
+
         _tray = new NotifyIcon
         {
-            Icon = SystemIcons.Application,
+            Icon = appIcon ?? SystemIcons.Application,
             Text = "仰山课表",
             Visible = true,
         };

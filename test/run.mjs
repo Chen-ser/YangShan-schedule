@@ -2558,6 +2558,50 @@ t('密钥扫描器对第三方 vendor 代码不套用个人信息规则', () => 
   ok(src.includes('SKIP_PATHS'), '安卓 assets/index.html 是构建产物，会把 vendor 的误报再报一次');
 });
 
+t('两个壳的图标都来自同一张徽章图，且启动器蒙版不会裁到画面', () => {
+  const res = 'shells/android/app/src/main/res';
+  const manifest = readFileSync(join(ROOT, 'shells/android/app/src/main/AndroidManifest.xml'), 'utf8');
+  ok(manifest.includes('android:icon="@mipmap/ic_launcher"'),
+    '自适应图标只能是位图，走 mipmap；还指着 drawable 就说明用的是旧的矢量占位图');
+  ok(manifest.includes('android:roundIcon="@mipmap/ic_launcher_round"'),
+    '圆形蒙版启动器要单独给一份，否则会被裁成方块');
+
+  const adaptive = readFileSync(join(ROOT, res, 'mipmap-anydpi-v26/ic_launcher.xml'), 'utf8');
+  ok(adaptive.includes('@color/ic_launcher_background') && adaptive.includes('@mipmap/ic_launcher_foreground'),
+    'API 26+ 走自适应图标：背景 + 前景两层'); 
+
+  // 五个密度各三张，缺一张就会在某些机器上退化成系统默认图标
+  for (const d of ['mdpi', 'hdpi', 'xhdpi', 'xxhdpi', 'xxxhdpi']) {
+    for (const f of ['ic_launcher.png', 'ic_launcher_round.png', 'ic_launcher_foreground.png']) {
+      ok(existsSync(join(ROOT, res, `mipmap-${d}`, f)), `缺 ${d}/${f}`);
+    }
+  }
+
+  // 前景图必须是正方形且四周留透明：画心只占 108dp 画布正中的 72dp 安全区，
+  // 否则圆形/水滴蒙版会把徽章外圈切掉。
+  const fg = readFileSync(join(ROOT, res, 'mipmap-xxxhdpi/ic_launcher_foreground.png'));
+  ok(fg.subarray(1, 4).toString('latin1') === 'PNG', '前景图必须是 PNG');
+  const fgW = fg.readUInt32BE(16);
+  const fgH = fg.readUInt32BE(20);
+  ok(fgW === 432 && fgH === 432, `xxxhdpi 前景图应是 108dp×4 = 432px，实测 ${fgW}x${fgH}`);
+
+  const csproj = readFileSync(join(ROOT, 'shells/windows/YangShanShell.csproj'), 'utf8');
+  ok(csproj.includes('<ApplicationIcon>app.ico</ApplicationIcon>'),
+    '没有 ApplicationIcon，exe 就是 .NET 的默认图标');
+  const icoPath = join(ROOT, 'shells/windows/app.ico');
+  ok(existsSync(icoPath), 'app.ico 必须入库，否则换台机器构建出来的 exe 又没图标了');
+  const ico = readFileSync(icoPath);
+  ok(ico.readUInt16LE(0) === 0 && ico.readUInt16LE(2) === 1, 'app.ico 不是合法的 ICO 头');
+  const icoCount = ico.readUInt16LE(4);
+  ok(icoCount >= 8, `ico 里要多带几种尺寸（现在 ${icoCount} 种），只放一张 256 的话 16x16 会糊成一团`);
+
+  const mainForm = readFileSync(join(ROOT, 'shells/windows/MainForm.cs'), 'utf8');
+  ok(mainForm.includes('Icon.ExtractAssociatedIcon'),
+    '窗口与托盘图标要从 exe 里取回来，不能写死系统默认图标');
+  ok(!mainForm.includes('Icon = SystemIcons.Application'),
+    '托盘图标写死 SystemIcons.Application 时，exe 换了图标托盘还是旧的');
+});
+
 const total = pass + failures.length;
 console.log('');
 if (failures.length) {

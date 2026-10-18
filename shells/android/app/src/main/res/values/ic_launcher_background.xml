@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 自适应图标的背景层：与徽章图自身的白底同色，蒙版边缘不会露出色差。 -->
+    <color name="ic_launcher_background">#FFFFFF</color>
+</resources>

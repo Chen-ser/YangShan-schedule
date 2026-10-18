@@ -14,12 +14,36 @@
 | 平台 | 做法 | 状态 |
 | --- | --- | --- |
 | Windows | `shells/windows`：WebView2 + WinForms | ✅ 已编译、已安装（开始菜单 / 桌面 / 卸载项）、`--uitest` 自检六项全过 |
-| 安卓 | `shells/android`：WebView + Gradle | ✅ `gradle assembleDebug` 通过，APK 9.24 MB（SHA256 `F47D2FB8…`）；**真机安装运行未验**（构建机无 adb 设备） |
+| 安卓 | `shells/android`：WebView + Gradle | ✅ `gradle assembleDebug` 通过，APK 约 10.6 MB；**真机安装运行未验**（构建机无 adb 设备） |
 | iOS / iPadOS | 不加壳：Safari「添加到主屏幕」+ 书签小工具 + `.ics` 订阅 | 见 `docs/install-mobile.md` |
 | 鸿蒙 HarmonyOS | 同上（浏览器「添加到桌面」） | 见 `docs/install-mobile.md` |
 
 > iOS 不给第三方挂后台定时器，也不给跨源请求，所以 iOS 上唯一能走通的路线是
 > 「网页 PWA + 书签抓取 + webcal 订阅日历」。这条路线不装任何东西，代价是要手动点一下书签。
+
+## 图标 · 两个壳共用一张图
+
+品牌图只有一份：`shells/branding/app-icon.jpg`（1280×1280 圆形徽章）。两个壳的图标都由
+`tools/make-icons.py` 从它生成，**不要手改生成物**（手改的在下一次换图时会被覆盖）：
+
+| 产物 | 谁在用 | 规格 |
+| --- | --- | --- |
+| `shells/windows/app.ico` | exe 的 PE 资源（csproj 的 `<ApplicationIcon>`）——资源管理器、任务栏、快捷方式、托盘读的都是它 | 10 种尺寸，16 → 256 |
+| `mipmap-*/ic_launcher.png` | API 26 以下，或不支持自适应图标的启动器 | 48 / 72 / 96 / 144 / 192 |
+| `mipmap-*/ic_launcher_round.png` | 同上，只给圆形蒙版的机器 | 同上 |
+| `mipmap-*/ic_launcher_foreground.png` | API 26+ 自适应图标的前景，背景取自 `values/ic_launcher_background.xml` 的纯白 | 108dp 画布，画心占正中 72dp |
+
+换图：覆盖 `shells/branding/app-icon.jpg` → 跑 `python tools/make-icons.py` → 两个壳各自重新构建。
+
+两条硬约束（`test/run.mjs` 里有断言守着）：
+
+1. **自适应图标的前景必须留在正中 72dp 安全区里。** 启动器的蒙版（圆形 / 圆角方形 / 水滴）
+   只保证这 72dp 可见，画满 108dp 会被切掉四边。源图自带约 4% 白边，缩到 72dp 后徽章外圈
+   约 66dp，正好在安全区内。
+2. **ICO 里必须多带几种尺寸。** 只放一张 256 的话，托盘会把 256 硬缩到 16，边缘糊成一团。
+
+> 这里第一次给仓库引入二进制资源。之前用矢量 `drawable/ic_launcher.xml` 是为了避开二进制，
+> 但品牌图本身就是位图，矢量重绘的保真度不如直接用图 —— 所以换掉了。
 
 ## `capture.js`：抓取逻辑只有这一份
 
