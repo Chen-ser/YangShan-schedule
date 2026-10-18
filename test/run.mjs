@@ -2602,6 +2602,37 @@ t('两个壳的图标都来自同一张徽章图，且启动器蒙版不会裁�
     '托盘图标写死 SystemIcons.Application 时，exe 换了图标托盘还是旧的');
 });
 
+t('管理页：没点「加入列表」也不会再提交一条空公告', () => {
+  const admin = readFileSync(join(ROOT, 'web/admin/admin.js'), 'utf8');
+  const pub = admin.slice(admin.indexOf('async function doPublish'), admin.indexOf('function pushNotify'));
+  ok(pub.includes('if (!commitForm()) return;'),
+    '发布时必须先把表单里还没入列表的内容补进列表，否则写好的公告不会被提交');
+  ok(pub.indexOf('commitForm()') < pub.indexOf('writeRemote'),
+    '补列表这一步必须发生在提交之前');
+  ok(pub.includes('if (!list.length)'),
+    '列表为空要拦住 —— 否则会提交「更新 0 条」的空提交，且因为列表为空连门铃都不发');
+  ok(pub.indexOf('!list.length') < pub.indexOf('writeRemote'),
+    '空列表检查必须发生在提交之前');
+  ok(pub.includes('pushNotify()'), '发布成功后要顺手敲一声门铃');
+  ok(pub.includes('但没有设推送频道'),
+    '没设频道时必须明说「同学收不到提醒」，不然又是一次「发了但没人知道」');
+  // 2026-10-18 真的踩过：连提交两条「更新 0 条」，公告没发出去、手机也没收到推送
+  const live = JSON.parse(readFileSync(join(ROOT, 'data/announcements.json'), 'utf8'));
+  ok(Array.isArray(live.announcements), '仓库里的公告文件必须是 { announcements: [...] } 结构');
+});
+
+t('管理页：草稿不会因为刷新页面或点「测试连接并读取」而丢', () => {
+  const admin = readFileSync(join(ROOT, 'web/admin/admin.js'), 'utf8');
+  ok(admin.includes("const LS_DRAFT = 'yangshan-admin/draft/v1'"), '草稿要落在本机，不然刷新就没了');
+  const list = admin.slice(admin.indexOf('function renderList'), admin.indexOf('function resetForm'));
+  ok(list.includes('saveDraft()'), '每次重画列表都要顺手存一份草稿（增删改都会重画）');
+  ok(admin.includes('restoreDraft();'), '启动时要恢复上次没发布的草稿');
+  const test = admin.slice(admin.indexOf('async function doTest'), admin.indexOf('// ---------------------------------------------------------------- 分享码'));
+  ok(!/list = parsed\.list/.test(test),
+    '「测试连接并读取」不能直接把本地列表覆盖成远端内容 —— 会把刚写好的公告冲掉');
+  ok(test.includes('localOnly'), '读取远端后要把本机还没提交的公告并回去');
+});
+
 const total = pass + failures.length;
 console.log('');
 if (failures.length) {

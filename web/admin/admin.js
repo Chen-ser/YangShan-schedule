@@ -200,6 +200,35 @@ function newId() {
 
 // ---------------------------------------------------------------- 渲染
 
+// ---------------------------------------------------------------- 草稿
+
+/**
+ * 正在编辑的列表只存在内存里 —— 一刷新页面、或者去点「测试连接并读取」，
+ * 刚写好的公告就没了。2026-10-18 因此连着提交了两次「更新 0 条」的空提交，
+ * 公告没发出去、门铃也没响。所以每次重画列表都顺手落一份到本机。
+ */
+const LS_DRAFT = 'yangshan-admin/draft/v1';
+
+function saveDraft() {
+  try {
+    localStorage.setItem(LS_DRAFT, JSON.stringify({ list, at: new Date().toISOString() }));
+  } catch {
+    /* 存不下不影响发布 */
+  }
+}
+
+function restoreDraft() {
+  let saved;
+  try {
+    saved = JSON.parse(localStorage.getItem(LS_DRAFT) || 'null');
+  } catch {
+    return;
+  }
+  if (!saved || !Array.isArray(saved.list) || !saved.list.length) return;
+  list = saved.list;
+  setHint('pubHint', `已恢复上次没发布的草稿（${list.length} 条）—— 确认无误后点「发布到仓库」。`, 'ok');
+}
+
 function renderList() {
   const box = $id('list');
   box.replaceChildren();
@@ -262,6 +291,7 @@ function renderList() {
     item.append(t, body, ops);
     box.append(item);
   });
+  saveDraft();
 }
 
 // ---------------------------------------------------------------- 表单
@@ -296,7 +326,7 @@ function commitForm() {
   const body = $id('fBody').value.trim();
   if (!title && !body) {
     setHint('pubHint', '标题和正文至少要有一个 —— 两个都空的公告在应用里会被丢掉。', 'bad');
-    return;
+    return false;
   }
   const patch = {
     title,
@@ -317,6 +347,7 @@ function commitForm() {
   }
   resetForm();
   renderList();
+  return true;
 }
 
 // ---------------------------------------------------------------- 发布
@@ -324,6 +355,15 @@ function commitForm() {
 async function doPublish() {
   readCfgInputs();
   if (!cfg.token) return setHint('pubHint', '先填 GitHub 令牌。', 'bad');
+  // 表单里还有内容 ⇒ 这条还没进列表（commitForm 成功后会把表单清空）。
+  // 以前这里直接提交 list，用户写完不点「加入列表」就发布，会提交一条「更新 0 条」的空提交，
+  // 而且因为 list 为空连门铃都不发 —— 表现就是「公告发了但手机没收到」。现在自动补上这一步。
+  if ($id('fTitle').value.trim() || $id('fBody').value.trim()) {
+    if (!commitForm()) return; // 校验没过，原因已经写进提示里
+  }
+  if (!list.length) {
+    return setHint('pubHint', '列表里一条公告都没有，没什么可发布的 —— 先在上面写一条。', 'bad');
+  }
   const btn = $id('btnPublish');
   btn.disabled = true;
   setHint('pubHint', '正在提交…');
@@ -341,6 +381,8 @@ async function doPublish() {
       } catch (e) {
         setHint('pubHint', `${note}但推送失败（${e.message}）—— 不影响公告本身，同学打开应用仍能看到。`, '');
       }
+    } else if (!cfg.topic) {
+      setHint('pubHint', `${note}但没有设推送频道 —— 同学不会收到提醒，得等他们自己打开应用才看得到。`, '');
     }
   } catch (e) {
     setHint('pubHint', e.message, 'bad');
@@ -407,9 +449,15 @@ async function doTest() {
       setHint('connHint', `仓库里还没有 ${cfg.path} —— 第一次「发布」会自动创建它。`, 'ok');
     } else {
       const parsed = parseFile(r.text);
-      list = parsed.list;
+      // 不直接覆盖本地列表：刚写好还没发布的公告不能被一次「读取」冲掉
+      const remote = parsed.list;
+      const remoteIds = new Set(remote.map((a) => String(a.id)));
+      const localOnly = list.filter((a) => !remoteIds.has(String(a.id)));
+      list = [...localOnly, ...remote];
       remoteExtra = parsed.extra;
-      setHint('connHint', `连接正常，读到 ${list.length} 条公告。`, 'ok');
+      setHint('connHint', localOnly.length
+        ? `连接正常，读到 ${remote.length} 条公告；本机还有 ${localOnly.length} 条没提交，已一并留在下面。`
+        : `连接正常，读到 ${remote.length} 条公告。`, 'ok');
     }
     renderList();
   } catch (e) {
@@ -510,6 +558,7 @@ loadCfg();
 fillCfgInputs();
 bind();
 resetForm();
+restoreDraft();
 renderShare();
 renderList();
 setHint('connHint', cfg.token ? '已从本机读到令牌。点「测试连接并读取」验证一下。' : '填好仓库和令牌，然后点「测试连接并读取」。');
