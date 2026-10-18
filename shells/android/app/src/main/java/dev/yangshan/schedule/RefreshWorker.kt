@@ -35,6 +35,12 @@ class RefreshWorker(appContext: Context, params: WorkerParameters) : CoroutineWo
         try {
             val raw = capture(web, creds.first, creds.second)
             Store.saveRaw(applicationContext, raw)
+            // 页面正在打开时立即回推；页面尚未打开时，MainActivity 会在加载后
+            // 通过 Store.rawAt/restoreIfNeeded 补上这次结果。
+            applicationContext.sendBroadcast(
+                android.content.Intent(MainActivity.ACTION_REFRESH_AVAILABLE)
+                    .setPackage(applicationContext.packageName),
+            )
             Notify.show(applicationContext, "课表已更新", "已从教务系统同步最新课表。")
             Result.success()
         } catch (e: Exception) {

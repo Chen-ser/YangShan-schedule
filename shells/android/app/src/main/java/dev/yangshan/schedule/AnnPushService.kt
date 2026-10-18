@@ -213,14 +213,19 @@ class AnnPushService : Service() {
     private fun onDoorbell(source: AnnPush.Source) {
         // App 就在前台时，网页端自己会弹（还带点进去看详情的行为），这里让位。
         if (AnnPush.appVisible) return
-        val result = latestAnnouncement(source)
-        when (result.status) {
-            AnnouncementStatus.FRESH ->
-                Notify.showAnnouncement(this, "${source.id}:${result.id}", result.title, result.body)
-            // 重连、重复门铃或公告源暂时不可用时不弹“有新公告”，
-            // 避免同一条 ntfy 消息造成通知刷屏。
-            AnnouncementStatus.NO_NEW,
-            AnnouncementStatus.UNAVAILABLE -> Unit
+        // 网页端会把多个公告源归一到同一个公共频道，SSE 层只开一条连接；
+        // 这里必须把同频道的每个 URL 都检查一遍，否则后台只处理第一个源。
+        val sources = AnnPush.sourcesForTopic(this, source.topic).ifEmpty { listOf(source) }
+        for (candidate in sources) {
+            val result = latestAnnouncement(candidate)
+            when (result.status) {
+                AnnouncementStatus.FRESH ->
+                    Notify.showAnnouncement(this, "${candidate.id}:${result.id}", result.title, result.body)
+                // 重连、重复门铃或公告源暂时不可用时不弹“有新公告”，
+                // 避免同一条 ntfy 消息造成通知刷屏。
+                AnnouncementStatus.NO_NEW,
+                AnnouncementStatus.UNAVAILABLE -> Unit
+            }
         }
     }
 

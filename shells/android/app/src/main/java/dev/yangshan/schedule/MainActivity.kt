@@ -1,6 +1,8 @@
 package dev.yangshan.schedule
 
 import android.app.Activity
+import android.content.BroadcastReceiver
+import android.content.IntentFilter
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -34,6 +36,7 @@ class MainActivity : Activity(), ShellBridge.Host {
     companion object {
         private const val ORIGIN = "https://appassets.androidplatform.net"
         private const val ENTRY_URL = "$ORIGIN/assets/index.html"
+        const val ACTION_REFRESH_AVAILABLE = "dev.yangshan.schedule.REFRESH_AVAILABLE"
         private const val REQ_LOGIN = 4001
         private const val REQ_NOTIFY = 4002
         private const val REQ_FILE = 4003
@@ -48,6 +51,9 @@ class MainActivity : Activity(), ShellBridge.Host {
     private lateinit var shareDir: File
     private var pendingShare: SharePayload? = null
     private var shareDeliveryTries = 0
+    private var shareRequestSerial = 0L
+    private var refreshReceiver: BroadcastReceiver? = null
+    private var pendingRefreshRaw: String? = null
 
     /** 正在处理的请求 id（来自 shim 那一侧的 id），抓完用它把结果送回去。 */
     private var pendingId: String? = null
@@ -68,7 +74,7 @@ class MainActivity : Activity(), ShellBridge.Host {
         super.onCreate(savedInstanceState)
         shareDir = File(cacheDir, "share-inbox")
         shareDir.mkdirs()
-        pendingShare = readShareIntent(intent)
+        handleShareIntent(intent)
 
         // Android 13 起通知要用户点头。不给也能用，只是后台刷新完没法提示。
         web = WebView(this).apply {
@@ -107,6 +113,28 @@ class MainActivity : Activity(), ShellBridge.Host {
         }
         web.addJavascriptInterface(ShellBridge(this), "YangShanNative")
 
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: android.content.Context?, intent: Intent?) {
+                if (intent?.action != ACTION_REFRESH_AVAILABLE) return
+                Thread {
+                    val raw = Store.raw(this@MainActivity)
+                    if (raw.isNullOrBlank()) return@Thread
+                    runOnUiThread {
+                        pendingRefreshRaw = raw
+                        importRefreshedRaw(raw)
+                    }
+                }.start()
+            }
+        }
+        refreshReceiver = receiver
+        val refreshFilter = IntentFilter(ACTION_REFRESH_AVAILABLE)
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(receiver, refreshFilter, RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(receiver, refreshFilter)
+        }
+
         val loader = WebViewAssetLoader.Builder()
             .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
             .addPathHandler("/shared/", WebViewAssetLoader.InternalStoragePathHandler(this, shareDir))
@@ -124,6 +152,10 @@ class MainActivity : Activity(), ShellBridge.Host {
                     if (pendingShare != null) {
                         shareDeliveryTries = 0
                         deliverPendingShare()
+                    }
+                    pendingRefreshRaw?.let { raw ->
+                        pendingRefreshRaw = null
+                        importRefreshedRaw(raw)
                     }
                 }
             }
@@ -149,8 +181,26 @@ class MainActivity : Activity(), ShellBridge.Host {
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
-        pendingShare = readShareIntent(intent)
-        if (pendingShare != null) deliverPendingShare()
+        handleShareIntent(intent)
+    }
+
+    /**
+     * URI 元数据和文件复制都放到后台线程，避免微信分享大文件时阻塞主线程。
+     * 用序号丢弃过期请求，防止用户连续分享时旧文件覆盖新文件。
+     */
+    private fun handleShareIntent(incoming: Intent?) {
+        val serial = ++shareRequestSerial
+        pendingShare = null
+        shareDeliveryTries = 0
+        Thread {
+            val payload = readShareIntent(incoming)
+            runOnUiThread {
+                if (serial != shareRequestSerial) return@runOnUiThread
+                pendingShare = payload
+                shareDeliveryTries = 0
+                if (payload != null && ::web.isInitialized) deliverPendingShare()
+            }
+        }.start()
     }
 
     private fun readShareIntent(incoming: Intent?): SharePayload? {
@@ -388,12 +438,46 @@ class MainActivity : Activity(), ShellBridge.Host {
 
     override fun onRequestNotifications(id: String) {
         runOnUiThread {
-            if (Build.VERSION.SDK_INT < 33 || Notify.notificationsEnabled(this)) {
+            if (Notify.notificationsEnabled(this)) {
                 reply(JSONObject().put("id", id).put("ok", true).put("pack", JSONObject().put("granted", true)))
                 return@runOnUiThread
             }
-            pendingNotifyId = id
-            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFY)
+            if (Build.VERSION.SDK_INT < 33) {
+                // 低版本没有运行时权限，但用户仍可能在系统设置里关闭整个应用通知。
+                // 不能把“无运行时权限”误报成“通知已开启”。
+                openNotificationSettings()
+                reply(JSONObject().put("id", id).put("ok", false).put("error", "请在系统设置中允许仰山课表通知。"))
+                return@runOnUiThread
+            }
+            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) {
+                pendingNotifyId = id
+                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFY)
+                return@runOnUiThread
+            }
+            // 运行时权限已授予但应用通知总开关/渠道被用户关闭时，重复 requestPermissions
+            // 不会触发回调，必须直接带用户去系统设置并回失败包。
+            openNotificationSettings()
+            reply(JSONObject().put("id", id).put("ok", false).put("error", "请在系统设置中允许仰山课表通知。"))
+        }
+    }
+
+    private fun openNotificationSettings() {
+        try {
+            startActivity(
+                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, packageName),
+            )
+        } catch (_: Exception) {
+            try {
+                startActivity(
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                        .setData(Uri.parse("package:$packageName")),
+                )
+            } catch (_: Exception) {
+                // 某些定制系统没有通知详情页，保留网页端失败提示即可。
+            }
         }
     }
 
@@ -549,17 +633,28 @@ class MainActivity : Activity(), ShellBridge.Host {
         Thread {
             val raw = Store.raw(this)
             if (raw.isNullOrBlank()) return@Thread
-            val js = """
-                (function () {
-                  if (!globalThis.YangShan) return 'no-bridge';
-                  try {
-                    YangShan.importText(${JSONObject.quote(raw)}, { preserveChanges: true });
-                    return 'restored';
-                  } catch (e) { return 'error: ' + e.message; }
-                })()
-            """.trimIndent()
-            runOnUiThread { web.evaluateJavascript(js, null) }
+            runOnUiThread { importRefreshedRaw(raw) }
         }.start()
+    }
+
+    /** 把后台刷新或本地备份的原始课表送回当前页面，并保留用户修改记录。 */
+    private fun importRefreshedRaw(raw: String) {
+        val js = """
+            (function () {
+              if (!globalThis.YangShan) return 'no-bridge';
+              try {
+                YangShan.importText(${JSONObject.quote(raw)}, { preserveChanges: true });
+                return 'restored';
+              } catch (e) { return 'error: ' + e.message; }
+            })()
+        """.trimIndent()
+        web.evaluateJavascript(js) { result ->
+            if (result?.contains("no-bridge") == true) {
+                pendingRefreshRaw = raw
+            } else if (pendingRefreshRaw == raw) {
+                pendingRefreshRaw = null
+            }
+        }
     }
 
     // ── 回包 ────────────────────────────────────────────────────────────────
@@ -597,6 +692,14 @@ class MainActivity : Activity(), ShellBridge.Host {
     }
 
     override fun onDestroy() {
+        refreshReceiver?.let {
+            try {
+                unregisterReceiver(it)
+            } catch (_: Exception) {
+                // 已经注销或 Activity 初始化中断。
+            }
+        }
+        refreshReceiver = null
         web.destroy()
         super.onDestroy()
     }

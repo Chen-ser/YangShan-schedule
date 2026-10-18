@@ -43,6 +43,10 @@ object AnnPush {
 
     fun sources(ctx: Context): List<Source> = dedupeByTopic(rawSources(ctx))
 
+    /** 同一频道只保留一条 SSE，但门铃到达后要检查该频道的全部公告源。 */
+    fun sourcesForTopic(ctx: Context, topic: String): List<Source> =
+        rawSources(ctx).filter { it.topic == topic }
+
     /**
      * 全体推送之后所有公告源共用同一条 ntfy 频道。
      * 同一个频道开两条 SSE 连接只会让同一条公告弹两次通知，
