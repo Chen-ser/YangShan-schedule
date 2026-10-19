@@ -17,6 +17,8 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- 用户可在设置里手动允许后台运行，减少系统省电策略杀掉课表刷新。 -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- 允许课前/截止提醒在应用关闭后由系统闹钟唤醒。无此特殊权限时会自动降级为省电闹钟。 -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <application
         android:allowBackup="false"
@@ -88,5 +90,10 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+
+        <receiver
+            android:name=".ReminderReceiver"
+            android:enabled="true"
+            android:exported="false" />
     </application>
 </manifest>

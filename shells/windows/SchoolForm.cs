@@ -35,6 +35,7 @@ internal sealed class SchoolForm : Form
     private string? _password;
     private bool _interactive;
     private bool _fillAttempted;
+    private int _fillTries;
     private bool _capturing;
     private bool _shownForUser;
 
@@ -73,6 +74,7 @@ internal sealed class SchoolForm : Form
         _password = password ?? "";
         _interactive = interactive;
         _fillAttempted = false;
+        _fillTries = 0;
         _capturing = false;
         _shownForUser = false;
 
@@ -206,6 +208,7 @@ internal sealed class SchoolForm : Form
     private async Task TryFillAsync(CoreWebView2Frame frame)
     {
         _fillAttempted = true;
+        _fillTries++;
         var script = FillScript(_user!, _password ?? "");
         string status;
         try
@@ -229,6 +232,14 @@ internal sealed class SchoolForm : Form
                 break;
             case "nofields":
                 _fillAttempted = false;
+                if (_fillTries < 40)
+                {
+                    // 切换页签后 Vue 可能下一帧才把 v-if 的输入框插入 iframe。
+                    // FrameCreated 只会触发一次，因此这里必须自己轮询。
+                    await Task.Delay(400);
+                    if (_pending is not null && !_pending.Task.IsCompleted && !_fillAttempted)
+                        await TryFillAsync(frame);
+                }
                 break;
             default:
                 RevealWindow("请在这个窗口里登录学校统一身份认证。");
@@ -253,12 +264,12 @@ internal sealed class SchoolForm : Form
     /// </summary>
     private static string FillScript(string user, string password) =>
         "(function(){" +
-        "var u=document.querySelector('input[name=\"username\"]');" +
-        "var p=document.querySelector('input[name=\"password\"]');" +
-        "if(!u||!p) return 'nofields';" +
         "var tabs=document.querySelectorAll('.content-tabs-title > div');" +
         "for(var i=0;i<tabs.length;i++){" +
         "if(/账号密码|帳號密碼|password/i.test(tabs[i].textContent||'')){tabs[i].click();break;}}" +
+        "var u=document.querySelector('input[name=\"username\"]');" +
+        "var p=document.querySelector('input[name=\"password\"]');" +
+        "if(!u||!p) return 'nofields';" +
         "function set(el,v){var d=Object.getOwnPropertyDescriptor(el.constructor.prototype,'value');" +
         "if(d&&d.set){d.set.call(el,v);}else{el.value=v;}" +
         "el.dispatchEvent(new Event('input',{bubbles:true}));" +
@@ -350,8 +361,8 @@ internal sealed class SchoolForm : Form
         _shownForUser = true;
         if (status is not null) SetStatus(status);
         Location = new Point(
-            Math.Max(0, (Screen.PrimaryScreen?.WorkingArea.Width ?? 1280 - Width) / 2),
-            Math.Max(0, (Screen.PrimaryScreen?.WorkingArea.Height ?? 800 - Height) / 2));
+            Math.Max(0, ((Screen.PrimaryScreen?.WorkingArea.Width ?? 1280) - Width) / 2),
+            Math.Max(0, ((Screen.PrimaryScreen?.WorkingArea.Height ?? 800) - Height) / 2));
         ShowInTaskbar = true;
         Show();
         BringToFront();

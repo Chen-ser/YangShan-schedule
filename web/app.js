@@ -141,7 +141,12 @@ function h(tag, props, ...children) {
     if (k === 'class') node.className = v;
     else if (k === 'text') node.textContent = v;
     else if (k === 'html') node.innerHTML = v; // 只用于我们自己生成的 Markdown
-    else if (k === 'style') Object.assign(node.style, v);
+    else if (k === 'style') {
+      for (const [name, value] of Object.entries(v ?? {})) {
+        if (name.startsWith('--')) node.style.setProperty(name, value);
+        else node.style[name] = value;
+      }
+    }
     else if (k.startsWith('on')) node.addEventListener(k.slice(2).toLowerCase(), v);
     else if (k === 'dataset') Object.assign(node.dataset, v);
     else node.setAttribute(k, v === true ? '' : v);
@@ -345,20 +350,70 @@ function sectionForClock(value, fallback) {
   return nearest;
 }
 
-function courseVisualInsets(item) {
+function visualSectionPoint(value, fallback, isEnd = false) {
+  const minutes = clockMinutes(value);
+  const fallbackSection = Math.min(SECTION_TIMES.length, Math.max(1, Number(fallback) || 1));
+  if (minutes == null) return { section: fallbackSection, fraction: isEnd ? 1 : 0 };
+  for (let i = 0; i < SECTION_TIMES.length; i++) {
+    const start = clockMinutes(SECTION_TIMES[i].start);
+    const end = clockMinutes(SECTION_TIMES[i].end);
+    if (minutes >= start && minutes <= end) {
+      return {
+        section: i + 1,
+        fraction: Math.max(0, Math.min(1, (minutes - start) / Math.max(1, end - start))),
+      };
+    }
+  }
+  if (minutes < clockMinutes(SECTION_TIMES[0].start)) return { section: 1, fraction: 0 };
+  if (minutes > clockMinutes(SECTION_TIMES[SECTION_TIMES.length - 1].end)) {
+    return { section: SECTION_TIMES.length, fraction: 1 };
+  }
+  for (let i = 0; i < SECTION_TIMES.length - 1; i++) {
+    const end = clockMinutes(SECTION_TIMES[i].end);
+    const nextStart = clockMinutes(SECTION_TIMES[i + 1].start);
+    if (minutes > end && minutes < nextStart) {
+      return isEnd ? { section: i + 1, fraction: 1 } : { section: i + 2, fraction: 0 };
+    }
+  }
+  return { section: fallbackSection, fraction: isEnd ? 1 : 0 };
+}
+
+function courseVisualPlacement(item) {
   const span = sectionSpan(item);
-  const start = clockMinutes(item?.beginTime || item?.start) ?? clockMinutes(SECTION_TIMES[span.begin - 1].start);
-  const end = clockMinutes(item?.endTime || item?.end) ?? clockMinutes(SECTION_TIMES[span.end - 1].end);
-  const sectionStart = clockMinutes(SECTION_TIMES[span.begin - 1].start);
-  const sectionEnd = clockMinutes(SECTION_TIMES[span.begin - 1].end);
-  const lastSectionStart = clockMinutes(SECTION_TIMES[span.end - 1].start);
-  const lastSectionEnd = clockMinutes(SECTION_TIMES[span.end - 1].end);
-  const top = Math.max(0, Math.min(45, ((start - sectionStart) / Math.max(1, sectionEnd - sectionStart)) * 46));
-  const bottom = Math.max(0, Math.min(45, ((lastSectionEnd - end) / Math.max(1, lastSectionEnd - lastSectionStart)) * 46));
+  const startPoint = visualSectionPoint(item?.beginTime || item?.start, span.begin);
+  const endPoint = visualSectionPoint(item?.endTime || item?.end, span.end, true);
+  const visualBegin = Math.min(startPoint.section, endPoint.section);
+  const visualEnd = Math.max(visualBegin, endPoint.section);
   return {
-    marginTop: `${(1 + top).toFixed(2)}px`,
-    marginBottom: `${(1 + bottom).toFixed(2)}px`,
+    gridRow: `${visualBegin} / ${visualEnd + 1}`,
+    '--course-top': `${Math.min(45, startPoint.fraction * 46).toFixed(2)}px`,
+    '--course-bottom': `${Math.min(45, (1 - endPoint.fraction) * 46).toFixed(2)}px`,
   };
+}
+
+function courseVisualInsets(item) {
+  const { gridRow: _gridRow, ...insets } = courseVisualPlacement(item);
+  return insets;
+}
+
+function courseTimeLabel(item) {
+  const span = sectionSpan(item);
+  const start = normTime(item?.beginTime || item?.start);
+  const end = normTime(item?.endTime || item?.end);
+  const expectedStart = SECTION_TIMES[span.begin - 1]?.start;
+  const expectedEnd = SECTION_TIMES[span.end - 1]?.end;
+  if (!start || !end || (start === expectedStart && end === expectedEnd)) return '';
+  return `${start}–${end}`;
+}
+
+function locationForDisplay(value) {
+  // 只允许在连字符处换行，避免把 ZXB 或 306 这样的完整分组拆开。
+  return String(value ?? '').replace(/([A-Za-z]{3})-(?=\d{3}\b)/g, '$1-\u200b');
+}
+
+function sectionTimeLabel(section) {
+  const item = SECTION_TIMES[section - 1];
+  return item ? `${item.start}–${item.end}` : '';
 }
 
 function teacherOf(c) {
@@ -961,6 +1016,7 @@ function renderWeek() {
     },
       h('span', {}, String(s)),
       h('span', {}, (SECTION_TIMES[s - 1]?.start ?? '').slice(0, 5)),
+      h('span', {}, (SECTION_TIMES[s - 1]?.end ?? '').slice(0, 5)),
     ));
     for (let i = 0; i < dayCount; i++) {
       body.append(h('div', {
@@ -978,7 +1034,7 @@ function renderWeek() {
         class: 'course ' + colorOf(e.course),
         style: {
           gridColumn: String(col),
-          gridRow: `${e.beginSection - rowStart + 1} / ${e.endSection - rowStart + 2}`,
+          gridRow: courseVisualPlacement(e).gridRow,
           zIndex: '1',
           ...courseVisualInsets(e),
         },
@@ -988,8 +1044,8 @@ function renderWeek() {
         },
       },
         h('b', {}, e.course),
-        e.location ? h('i', {}, e.location) : null,
-        h('span', { class: 'ct' }, `${e.beginSection}-${e.endSection}节`),
+        e.location ? h('i', {}, locationForDisplay(e.location)) : null,
+        h('span', { class: 'ct' }, `${e.beginSection}-${e.endSection}节${courseTimeLabel(e) ? ` · ${courseTimeLabel(e)}` : ''}`),
       );
     bindCourseDrag(courseNode, e, 'week');
     body.append(courseNode);
@@ -1027,7 +1083,9 @@ function renderTotalSchedule() {
     body.append(h('div', {
       class: 'gd-time',
       style: { gridColumn: '1', gridRow: String(s) },
-    }, h('span', {}, String(s)), h('span', {}, (SECTION_TIMES[s - 1]?.start ?? '').slice(0, 5))));
+    }, h('span', {}, String(s)),
+    h('span', {}, (SECTION_TIMES[s - 1]?.start ?? '').slice(0, 5)),
+    h('span', {}, (SECTION_TIMES[s - 1]?.end ?? '').slice(0, 5))));
     for (let d = 0; d < dayCount; d++) {
       body.append(h('div', {
         class: 'gd-cell',
@@ -1050,7 +1108,7 @@ function renderTotalSchedule() {
       class: 'course ' + colorOf(c.courseName),
       style: {
         gridColumn: String(Number(c.dayOfWeek) + 1),
-        gridRow: `${begin} / ${end + 1}`,
+        gridRow: courseVisualPlacement(c).gridRow,
         zIndex: '1',
         ...courseVisualInsets(c),
       },
@@ -1060,8 +1118,8 @@ function renderTotalSchedule() {
       },
     },
       h('b', {}, c.courseName),
-      c.placeName ? h('i', {}, c.placeName) : null,
-      h('span', { class: 'ct' }, `${weekText} · ${begin}-${end}节`),
+      c.placeName ? h('i', {}, locationForDisplay(c.placeName)) : null,
+      h('span', { class: 'ct' }, `${weekText} · ${begin}-${end}节${courseTimeLabel(c) ? ` · ${courseTimeLabel(c)}` : ''}`),
     );
     bindCourseDrag(node, displayCourse, 'term');
     body.append(node);
@@ -2883,7 +2941,7 @@ function modalImportAccount() {
  * 教务导出的文件里只有周次、没有学期起始日，这一步是这条路径唯一的用户负担，
  * 所以给它一个能自己校验的界面：改周数会算出第 1 周的星期一，改日期会反推周数。
  */
-function weekAnchorRow(initialWeek) {
+function weekAnchorRow(initialWeek, initialDate = '') {
   const week = h('input', {
     class: 'text-input', type: 'number', min: '1', max: '30',
     value: String(initialWeek), style: { width: '5em', marginTop: '0' },
@@ -2906,7 +2964,12 @@ function weekAnchorRow(initialWeek) {
   week.addEventListener('change', fromWeek);
   date.addEventListener('input', fromDate);
   date.addEventListener('change', fromDate);
-  fromWeek();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(initialDate))) {
+    date.value = String(initialDate);
+    fromDate();
+  } else {
+    fromWeek();
+  }
 
   const node = h('div', {},
     h('label', { class: 'row' }, h('span', {}, '今天是第几周'), week),
@@ -2930,8 +2993,6 @@ function modalImportFile() {
     '支持教务系统「导出」出来的 Excel（.xlsx）和 Word（.docx）。文件只在你这台设备上解析，不会上传。');
   const anchorWeek = currentWeekNumber() ?? 1;
   const anchor = weekAnchorRow(anchorWeek);
-  anchor.node.hidden = true;
-
   let grid = null;
   const preview = h('div', {});
 
@@ -3019,7 +3080,6 @@ function modalImportShot() {
   bar.hidden = true;
   const preview = h('div', {});
   const anchor = weekAnchorRow(currentWeekNumber() ?? 1);
-  anchor.node.hidden = true;
 
   let busy = false;
 
@@ -3074,6 +3134,7 @@ function modalImportShot() {
             '这是从截图里认出来的，已经铺进格子了。把错字改掉、认错的课清空，然后保存。')],
           rows,
           anchorWeek: Number(anchor.week.value) || 1,
+          anchorDate: anchor.date.value,
           packOpts: { termStartDate: anchor.date.value },
           submitLabel: '保存',
         });
@@ -3276,7 +3337,10 @@ function openGridEditor(opts = {}) {
     return grid;
   };
 
-  const anchor = weekAnchorRow(opts.anchorWeek ?? currentWeekNumber() ?? 1);
+  const anchor = weekAnchorRow(
+    opts.anchorWeek ?? currentWeekNumber() ?? 1,
+    opts.anchorDate || '',
+  );
 
   const intro = opts.intro || [
     h('p', { class: 'muted small' },
@@ -3297,9 +3361,21 @@ function openGridEditor(opts = {}) {
       class: 'primary-btn',
       onClick: () => {
         try {
+        const packOpts = { ...(opts.packOpts || {}) };
+        const originalWeeks = Array.isArray(packOpts.termWeeks) ? packOpts.termWeeks : null;
+        const anchorWeek = Number(anchor.week.value) || 1;
+        const anchorDate = /^\d{4}-\d{2}-\d{2}$/.test(anchor.date.value) ? anchor.date.value : '';
+        const effectiveStart = anchorDate
+          ? addDays(anchorDate, -(anchorWeek - 1) * 7)
+          : '';
+        // 编辑已有课表时，未改日期就沿用原周历；一旦改了“第几周/第一周周一”，
+        // 用新起点重建同样长度的周历，否则这两个输入框看似可改、实际永远被旧 termWeeks 覆盖。
+        if (opts.rebaseAnchor && originalWeeks && effectiveStart && effectiveStart !== opts.originalStartDate) {
+          packOpts.termWeeks = makeTermWeeks(effectiveStart, originalWeeks.length);
+        }
         importFromGrid(parse(), Number(anchor.week.value) || 1, {
-          ...(opts.packOpts || {}),
-          termStartDate: anchor.date.value,
+          ...packOpts,
+          termStartDate: anchorDate,
           editCurrent: Boolean(opts.editCurrent),
         });
           return true;
@@ -3333,10 +3409,16 @@ function modalEditSchedule() {
   }
   const built = gridFromCourses(pack.arrangedList);
   const n = pack.arrangedList.length;
+  const currentWeek = currentWeekNumber() ?? 1;
+  const anchorDate = pack.termWeeks.find((w) => w.serialNumber === currentWeek)?.startDate ||
+    pack.termWeeks[0]?.startDate || '';
   openGridEditor({
     title: '编辑课表',
     rows: built.rows,
-    anchorWeek: currentWeekNumber() ?? 1,
+    anchorWeek: currentWeek,
+    anchorDate,
+    originalStartDate: pack.termWeeks[0]?.startDate || '',
+    rebaseAnchor: true,
     submitLabel: '保存',
     editCurrent: true,
     packOpts: { termWeeks: pack.termWeeks, termCode: pack.termCode },

@@ -56,15 +56,44 @@ function throws(fn, msg = 'expected throw') {
 }
 
 // ================================================================
-// 0b. 移动端课表布局护栏
-// 七天课表在窄屏上不能把每列压到不可读的窄条；网格应保留最小列宽，
-// 由外层容器提供横向滚动。这个检查直接针对最终会被内联进页面的 CSS。
+// 0b. 课表布局护栏
+// 课表必须压缩适配视口，不允许网格区域产生横向滚动。
 
-t('移动端课表网格保留最小列宽并允许横向滚动', () => {
+t('课表网格自适应视口并禁止横向滚动', () => {
   const css = readFileSync(join(ROOT, 'web/styles.css'), 'utf8');
-  ok(/\.grid-wrap[\s\S]*?overflow-x:\s*auto/.test(css), '课表容器必须支持横向滚动');
-  ok(/\.grid-head[\s\S]*?min-width:\s*calc\(38px \+ var\(--days, 7\) \* 50px\)/.test(css), '表头必须有最小宽度');
-  ok(/\.grid-body[\s\S]*?min-width:\s*calc\(38px \+ var\(--days, 7\) \* 50px\)/.test(css), '表体必须有最小宽度');
+  ok(/\.grid-wrap\s*\{[^}]*overflow:\s*hidden/.test(css), '课表容器必须裁切横向溢出');
+  ok(/\.grid-head\s*\{[^}]*width:\s*100%/.test(css), '表头宽度必须适配容器');
+  ok(/\.grid-body\s*\{[^}]*width:\s*100%/.test(css), '表体宽度必须适配容器');
+  ok(!/\.grid-(?:head|body)\s*\{[^}]*min-width:\s*calc/.test(css), '表头和表体不能设置导致横向滚动的最小宽度');
+});
+
+t('实际课程时间参与课表定位并显示在课程块内', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  ok(app.includes('function visualSectionPoint'), '必须将实际时间换算为节次内位置');
+  ok(app.includes('function courseVisualPlacement'), '课程块必须按实际时间计算视觉起止节次');
+  ok(app.includes('gridRow: `${visualBegin} / ${visualEnd + 1}`'), '实际起止时间跨节次时必须扩展课程块网格行');
+  ok(app.includes('function courseTimeLabel'), '非标准时间必须生成课程块内时间文本');
+  ok(app.includes('courseVisualPlacement(e).gridRow'), '周课表必须使用实际时间定位');
+  ok(app.includes('courseVisualPlacement(c).gridRow'), '总课表必须使用实际时间定位');
+  ok(app.includes("if (name.startsWith('--')) node.style.setProperty(name, value)"),
+    '课程块的 CSS 自定义偏移量必须写入真实 style 属性');
+});
+
+t('时间轴同时显示节次开始与结束时间，教室只在分组连字符换行', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  const css = readFileSync(join(ROOT, 'web/styles.css'), 'utf8');
+  ok((app.match(/SECTION_TIMES\[s - 1\]\?\.start/g) || []).length >= 2, '周课表与总课表都要显示开始时间');
+  ok((app.match(/SECTION_TIMES\[s - 1\]\?\.end/g) || []).length >= 2, '周课表与总课表都要显示结束时间');
+  ok(app.includes('function locationForDisplay'), '地点格式化函数必须存在');
+  ok(app.includes("'$1-\\u200b'"), '地点应只在字母与数字分组连字符处分行');
+  ok(/\.course i\s*\{[^}]*white-space:\s*normal/.test(css), '地点允许在分组连字符处分行');
+  ok(/\.course i\s*\{[^}]*word-break:\s*keep-all/.test(css), '地点中的字母/数字分组不得拆开');
+});
+
+t('助手备份选项不展示括号补充说明', () => {
+  const template = readFileSync(join(ROOT, 'web/template.html'), 'utf8');
+  ok(template.includes('<span>备份里带上助手对话</span>'), '保留助手对话选项的简短名称');
+  ok(!template.includes('含你问过的内容、附件里的图片'), '不再展示助手对话选项的括号说明');
 });
 
 t('周课表背景格显式绑定行列，时间轴不会被课程卡片挤走', () => {
@@ -173,10 +202,34 @@ t('Windows 壳上报的版本号不许手写', () => {
 t('课程块按实际时间在节次格内偏移显示', () => {
   const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
   ok(app.includes('function courseVisualInsets'), '必须有按分钟计算课程块偏移的函数');
-  ok(app.includes('marginTop: `${(1 + top).toFixed(2)}px`'), '开始时间应转换为上边距');
-  ok(app.includes('marginBottom: `${(1 + bottom).toFixed(2)}px`'), '结束时间应转换为下边距');
+  ok(app.includes('function courseVisualPlacement'), '必须根据实际时间确定课程块覆盖的网格行');
+  ok(app.includes('gridRow: `${visualBegin} / ${visualEnd + 1}`'), '跨节次的实际时间必须扩展课程块网格行');
+  ok(app.includes("'--course-top': `${Math.min(45, startPoint.fraction * 46).toFixed(2)}px`"), '开始时间应按节次内比例转换为顶部偏移');
+  ok(app.includes("'--course-bottom': `${Math.min(45, (1 - endPoint.fraction) * 46).toFixed(2)}px`"), '结束时间应按节次内比例转换为底部偏移');
   ok(app.includes('...courseVisualInsets(e)'), '周课表必须使用实际时间定位');
   ok(app.includes('...courseVisualInsets(c)'), '总课表必须使用实际时间定位');
+});
+
+t('文件和截图导入都保留第一周星期一', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  ok(app.includes("importFromGrid(grid, Number(anchor.week.value) || 1, {\n          termStartDate: anchor.date.value,"), '文件导入必须传入学期起始日');
+  ok(app.includes('anchorDate: anchor.date.value,\n          packOpts: { termStartDate: anchor.date.value },'), '截图识别后的校对页必须继承学期起始日');
+});
+
+t('安卓后台提醒在重启、忘记账号和并发保存后仍保持一致', () => {
+  const boot = readFileSync(join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/BootReceiver.kt'), 'utf8');
+  const main = readFileSync(join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/MainActivity.kt'), 'utf8');
+  ok(boot.includes('ReminderScheduler.rescheduleFromStore(ctx)'), '开机广播必须恢复一次性提醒');
+  ok(main.includes('ReminderScheduler.schedule(this, null)'), '忘记账号必须取消旧提醒');
+  ok(main.includes('persistEpoch') && main.includes('latestPersistAt'), '状态副本写入必须丢弃过期异步任务');
+});
+
+t('Windows 登录页切换标签后会轮询延迟渲染的输入框', () => {
+  const src = readFileSync(join(ROOT, 'shells/windows/SchoolForm.cs'), 'utf8');
+  ok(src.indexOf("querySelectorAll('.content-tabs-title > div')") < src.indexOf("querySelector('input[name=\\\"username\\\"]')"),
+    '必须先切到账号密码标签再查询输入框');
+  ok(src.includes('if (_fillTries < 40)') && src.includes('await TryFillAsync(frame)'),
+    '输入框延迟出现时必须重试填充');
 });
 
 t('安卓教务接口使用绝对地址，兼容 *default 路由的 WebView', () => {

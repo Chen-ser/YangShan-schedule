@@ -165,13 +165,12 @@ html.schedule-drag-lock body {
 /* ---------------------------------------------------------- 课表网格 */
 .grid-wrap {
   background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
-  overflow-x: auto; overflow-y: hidden; box-shadow: var(--shadow);
-  -webkit-overflow-scrolling: touch;
+  overflow: hidden; box-shadow: var(--shadow);
 }
 
 .grid-head {
   display: grid; grid-template-columns: 38px repeat(var(--days, 7), minmax(0, 1fr));
-  min-width: calc(38px + var(--days, 7) * 50px);
+  width: 100%; min-width: 0;
   border-bottom: 1px solid var(--border); background: var(--card);
 }
 .gh-cell { padding: 7px 2px; text-align: center; font-size: 12px; color: var(--muted); min-width: 0; }
@@ -182,11 +181,11 @@ html.schedule-drag-lock body {
 .grid-body {
   display: grid;
   grid-template-columns: 38px repeat(var(--days, 7), minmax(0, 1fr));
-  min-width: calc(38px + var(--days, 7) * 50px);
+  width: 100%; min-width: 0;
   grid-auto-rows: 46px;
 }
 .gd-time {
-  font-size: 10px; color: var(--muted); text-align: center;
+  font-size: 9px; color: var(--muted); text-align: center;
   display: flex; flex-direction: column; justify-content: center; gap: 1px;
   border-top: 1px solid var(--border); border-right: 1px solid var(--border);
   line-height: 1.15;
@@ -197,7 +196,10 @@ html.schedule-drag-lock body {
 .gd-cell:last-child { border-right: 0; }
 
 .course {
-  margin: 1px; border-radius: 7px; padding: 3px 5px; overflow: hidden;
+  margin: calc(1px + var(--course-top, 0px)) 1px calc(1px + var(--course-bottom, 0px));
+  height: calc(100% - var(--course-top, 0px) - var(--course-bottom, 0px) - 2px);
+  box-sizing: border-box;
+  border-radius: 7px; padding: 3px 5px; overflow: hidden;
   font-size: var(--course-font); line-height: 1.25; color: #fff;
   display: flex; flex-direction: column; gap: 1px;
   min-width: 0;                 /* 关键：不加的话内部 nowrap 会把整列撑开，把页面顶出横向滚动条 */
@@ -208,8 +210,12 @@ html.schedule-drag-lock body {
   -webkit-user-drag: none;
 }
 .course b { font-weight: 600; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
-.course i { font-style: normal; font-size: .88em; opacity: .9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.course .ct { font-size: .82em; opacity: .82; }
+.course i {
+  font-style: normal; font-size: .88em; opacity: .9; white-space: normal;
+  overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; word-break: keep-all;
+  min-width: 0;
+}
+.course .ct { font-size: .82em; opacity: .82; white-space: normal; overflow: hidden; text-overflow: ellipsis; }
 .course.dragging { opacity: .72; outline: 2px solid var(--accent); cursor: grabbing; touch-action: none; }
 .course.c0 { background: var(--c0); } .course.c1 { background: var(--c1); }
 .course.c2 { background: var(--c2); } .course.c3 { background: var(--c3); }

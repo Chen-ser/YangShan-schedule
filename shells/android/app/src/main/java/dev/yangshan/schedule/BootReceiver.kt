@@ -23,6 +23,9 @@ class BootReceiver : BroadcastReceiver() {
         ) {
             return
         }
+        // AlarmManager 的一次性闹钟会在重启后全部丢失；公告服务之外，
+        // 课前/截止提醒也必须从持久化状态重新排回去。
+        ReminderScheduler.rescheduleFromStore(ctx)
         // 没配过频道就是没开过推送，别自作主张起一个前台服务。
         if (!AnnPush.enabled(ctx)) return
         AnnPush.apply(ctx)

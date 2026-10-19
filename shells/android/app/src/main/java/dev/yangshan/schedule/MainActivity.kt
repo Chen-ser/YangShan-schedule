@@ -40,6 +40,8 @@ class MainActivity : Activity(), ShellBridge.Host {
         private const val REQ_LOGIN = 4001
         private const val REQ_NOTIFY = 4002
         private const val REQ_FILE = 4003
+        private const val RUNTIME_PREFS = "yangshan_runtime"
+        private const val K_INITIAL_PROMPTED = "initialSensitivePermissionsPrompted"
         private const val MAX_SHARED_BYTES = 30L * 1024L * 1024L
         // 冷启动要先把 2.4 MB 的页面铺起来，3 秒常常不够（旧值 12 次 × 250 ms）。
         // 现在前 12 次仍然快（页面通常已经好了），之后放慢到 1 秒一次，总共约一分钟。
@@ -58,6 +60,10 @@ class MainActivity : Activity(), ShellBridge.Host {
     /** 正在处理的请求 id（来自 shim 那一侧的 id），抓完用它把结果送回去。 */
     private var pendingId: String? = null
     private var pendingNotifyId: String? = null
+    private var initialPermissionFlow = false
+    private val persistLock = Any()
+    private var persistEpoch = 0L
+    private var latestPersistAt = 0L
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
 
     private data class SharePayload(
@@ -176,6 +182,8 @@ class MainActivity : Activity(), ShellBridge.Host {
         // 服务可能被系统杀过（省电、内存），这里按已存的配置把它恢复回来。
         // 没配过频道时 AnnPush.apply 什么也不做。
         AnnPush.apply(this)
+        Store.state(this)?.let { ReminderScheduler.schedule(this, it) }
+        web.postDelayed({ requestInitialSensitivePermissions() }, 700L)
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -428,7 +436,14 @@ class MainActivity : Activity(), ShellBridge.Host {
 
     override fun onForget(id: String) {
         Creds.clear(this)
-        Store.clear(this)
+        synchronized(persistLock) {
+            // 丢弃已经排队但尚未写入的旧页面状态，避免“忘记账号”后后台线程又把它写回来。
+            persistEpoch += 1
+            latestPersistAt = 0L
+            Store.clear(this)
+            // 清掉 AlarmManager 中已经排好的课前/截止提醒。
+            ReminderScheduler.schedule(this, null)
+        }
         replyOk(id, "{}")
     }
 
@@ -543,9 +558,62 @@ class MainActivity : Activity(), ShellBridge.Host {
 
     override fun onPersistState(json: String?, updatedAt: Long) {
         if (json.isNullOrBlank()) return
+        val epoch: Long
+        synchronized(persistLock) {
+            if (updatedAt < latestPersistAt) return
+            latestPersistAt = updatedAt
+            epoch = persistEpoch
+        }
         Thread {
-            runCatching { Store.saveState(this, json, updatedAt) }
+            synchronized(persistLock) {
+                // 用户可能已经点了“忘记账号/清除数据”，此时这份页面副本已经过期。
+                if (epoch != persistEpoch || updatedAt < Store.stateAt(this)) return@synchronized
+                runCatching {
+                    Store.saveState(this, json, updatedAt)
+                    ReminderScheduler.schedule(this, json)
+                }
+            }
         }.start()
+    }
+
+    /**
+     * 首次安装主动把最关键的系统授权交给用户确认，避免厂商系统在后台首次使用
+     * 时静默拒绝。通知权限之后再打开电池优化设置；没有精确闹钟特殊权限时，
+     * ReminderScheduler 会自动降级为省电闹钟，不阻塞首次使用。
+     */
+    private fun requestInitialSensitivePermissions() {
+        val prefs = getSharedPreferences(RUNTIME_PREFS, MODE_PRIVATE)
+        if (prefs.getBoolean(K_INITIAL_PROMPTED, false)) return
+        prefs.edit().putBoolean(K_INITIAL_PROMPTED, true).apply()
+        initialPermissionFlow = true
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFY)
+        } else {
+            openInitialBackgroundAccess()
+        }
+    }
+
+    private fun openInitialBackgroundAccess() {
+        if (!initialPermissionFlow) return
+        initialPermissionFlow = false
+        try {
+            val pm = getSystemService(POWER_SERVICE) as PowerManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+                !pm.isIgnoringBatteryOptimizations(packageName)
+            ) {
+                startActivity(
+                    Intent(
+                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        Uri.parse("package:$packageName"),
+                    ),
+                )
+            }
+        } catch (_: Exception) {
+            // 定制系统不提供该页面时，用户仍可在设置页手动允许。
+        }
     }
 
     override fun onOpen(url: String?) {
@@ -560,15 +628,17 @@ class MainActivity : Activity(), ShellBridge.Host {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != REQ_NOTIFY) return
-        val id = pendingNotifyId ?: return
-        pendingNotifyId = null
         val granted = Notify.notificationsEnabled(this)
-        if (granted) {
-            AnnPush.apply(this)
-            reply(JSONObject().put("id", id).put("ok", true).put("pack", JSONObject().put("granted", true)))
-        } else {
-            reply(JSONObject().put("id", id).put("ok", false).put("error", "请在系统设置中允许仰山课表通知。"))
+        pendingNotifyId?.let { id ->
+            pendingNotifyId = null
+            if (granted) {
+                AnnPush.apply(this)
+                reply(JSONObject().put("id", id).put("ok", true).put("pack", JSONObject().put("granted", true)))
+            } else {
+                reply(JSONObject().put("id", id).put("ok", false).put("error", "请在系统设置中允许仰山课表通知。"))
+            }
         }
+        if (initialPermissionFlow) openInitialBackgroundAccess()
     }
 
     /**

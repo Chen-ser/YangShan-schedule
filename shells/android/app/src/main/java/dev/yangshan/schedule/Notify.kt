@@ -67,8 +67,8 @@ object Notify {
         }
     }
 
-    /** 课表后台刷新完成。 */
-    fun show(ctx: Context, title: String, body: String) {
+    /** 课表后台刷新完成，或后台提醒到点。key 为空时沿用刷新通知的固定 id。 */
+    fun show(ctx: Context, title: String, body: String, key: String? = null) {
         channel(ctx, CH_SCHEDULE, "课表更新", NotificationManager.IMPORTANCE_DEFAULT)
 
         @Suppress("DEPRECATION")
@@ -81,7 +81,8 @@ object Notify {
             .setAutoCancel(true)
             .build()
 
-        post(ctx, ID_SCHEDULE, n)
+        val id = key?.let { 6000 + (it.hashCode() and 0x7fffffff) % 1000 } ?: ID_SCHEDULE
+        post(ctx, id, n)
     }
 
     /**
