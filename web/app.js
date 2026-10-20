@@ -22,7 +22,9 @@ const DEFAULT_ANNOUNCEMENT_SOURCE = Object.freeze({
 });
 const DEFAULT_SETTINGS = {
   alarm: 15,
-  todoAlarm: 30,   // 作业/网课/考试截止前多少分钟提醒
+  todoAlarm: 30,   // 待办事项截止前多少分钟提醒
+  courseAlarmEnabled: false,
+  todoAlarmEnabled: false,
   inApp: false,
   theme: 'auto',
   font: 100,
@@ -248,7 +250,13 @@ function loadState() {
       schedule: o.schedule ?? null,
       scheduleBase: o.scheduleBase ?? o.schedule ?? null,
       scheduleChanges: Array.isArray(o.scheduleChanges) ? o.scheduleChanges : [],
-      todos: Array.isArray(o.todos) ? o.todos : [],
+      todos: Array.isArray(o.todos) ? o.todos.map((todo) => ({
+        ...todo,
+        alarmEnabled: Boolean(todo?.alarmEnabled),
+        alarmMinutes: Number.isFinite(Number(todo?.alarmMinutes)) && Number(todo.alarmMinutes) >= 0
+          ? Number(todo.alarmMinutes)
+          : 30,
+      })) : [],
       readAnnouncements: cached.readIds,
       announcements: cached.announcements,
       localAnnouncements: Array.isArray(o.localAnnouncements) ? o.localAnnouncements : [],
@@ -1533,7 +1541,7 @@ function renderTodos() {
 
   if (!list.length) {
     box.append(h('div', { class: 'empty' }, h('b', {}, '没有待办'),
-      '作业、网课截止时间可以手动加，也可以把通知文本粘进来自动识别。'));
+      '待办事项截止时间可以手动加，也可以把通知文本粘进来自动识别。'));
   }
 
   for (const td of list) {
@@ -1626,6 +1634,22 @@ function bindTodoLongPress(node, todo) {
 }
 
 function modalEditTodo(todo) {
+  const alarmEnabled = Boolean(todo.alarmEnabled);
+  const alarmOptions = [
+    [5, '提前 5 分钟'],
+    [10, '提前 10 分钟'],
+    [15, '提前 15 分钟'],
+    [30, '提前 30 分钟'],
+    [60, '提前 1 小时'],
+    [180, '提前 3 小时'],
+    [1440, '提前 1 天'],
+  ];
+  const alarmToggle = h('input', { id: 'etAlarmEnabled', type: 'checkbox', checked: alarmEnabled ? true : null });
+  const alarmSelect = h('select', { id: 'etAlarmMinutes', disabled: alarmEnabled ? null : true },
+    ...alarmOptions.map(([value, label]) => h('option', {
+      value: String(value),
+      selected: Number(todo.alarmMinutes || 30) === value ? true : null,
+    }, label)));
   openModal('修改待办', [
     h('label', { class: 'row' }, h('span', {}, '内容'), h('input', { id: 'etTitle', class: 'text-input', value: todo.title })),
     h('label', { class: 'row' }, h('span', {}, '类型'),
@@ -1634,6 +1658,8 @@ function modalEditTodo(todo) {
     ),
     h('label', { class: 'row' }, h('span', {}, '截止'), h('input', { id: 'etDue', class: 'text-input', type: 'datetime-local', value: todo.due || '' })),
     h('label', { class: 'row' }, h('span', {}, '备注'), h('input', { id: 'etNote', class: 'text-input', value: todo.note || '' })),
+    h('label', { class: 'row' }, h('span', {}, '启用闹钟提醒'), alarmToggle),
+    h('label', { class: 'row', id: 'etAlarmRow', hidden: !alarmEnabled }, h('span', {}, '闹钟提前时间'), alarmSelect),
   ], [
     { label: '取消', class: 'ghost-btn' },
     {
@@ -1647,6 +1673,8 @@ function modalEditTodo(todo) {
           kind: $('etKind').value,
           due: $('etDue').value,
           note: $('etNote').value.trim(),
+          alarmEnabled: $('etAlarmEnabled').checked,
+          alarmMinutes: Number($('etAlarmMinutes').value) || 30,
           done: todo.done,
           createdAt: todo.createdAt,
         });
@@ -1658,6 +1686,10 @@ function modalEditTodo(todo) {
       },
     },
   ]);
+  alarmToggle.addEventListener('change', () => {
+    alarmSelect.disabled = !alarmToggle.checked;
+    $('etAlarmRow').hidden = !alarmToggle.checked;
+  });
 }
 
 function modalAddTodo() {
@@ -1686,7 +1718,7 @@ function modalAddTodo() {
 function modalParseNotice() {
   openModal('粘贴通知文本', [
     h('p', { class: 'muted small' },
-      '把微信 / QQ / 学习通里那条通知复制过来。会识别出日期时间和截止/作业/考试等关键字。'),
+      '把微信 / QQ / 学习通里那条通知复制过来。会识别出日期时间和待办事项类型关键字。'),
     h('textarea', { id: 'ntText', placeholder: '例：\n【学习通】高等数学 作业提交截止时间：2025-09-10 23:59\n2025-09-12 12:00 英语视听说网课截止' }),
     h('div', { id: 'ntPreview' }),
   ], [
@@ -1797,7 +1829,7 @@ function assistantInjectionPrompt() {
     '用户没有明确提问时，默认输出：摘要、关键时间、需要完成的事项、注意事项。',
     '如发现适合加入待办的事项，必须在回答末尾追加机器可读区块：',
     '[YS_TODOS]',
-    '[{"title":"事项名称","kind":"homework|online|exam|other","due":"YYYY-MM-DDTHH:MM","note":"备注"}]',
+    '[{"title":"事项名称","kind":"homework|online|exam|meeting|experiment|competition|activity|other","due":"YYYY-MM-DDTHH:MM","note":"备注"}]',
     '[/YS_TODOS]；没有明确截止时间的事项不要放入该区块。',
     '除非用户确认，否则软件不会自动加入待办。',
   ].join('\n');
@@ -2481,10 +2513,11 @@ async function refreshAnnouncements(quiet = false) {
  * Android WebView 通常没有 Notification API，因此原生壳必须优先接管通知。
  * 普通浏览器仍退回标准 Notification API。
  */
-function sendSystemNotification(title, body, tag = '') {
+function sendSystemNotification(title, body, tag = '', reminder = false) {
   const shell = globalThis.YangShanShell;
   if (shell && typeof shell.notify === 'function') {
-    shell.notify(title, body);
+    if (reminder && typeof shell.notifyReminder === 'function') shell.notifyReminder(title, body, tag);
+    else shell.notify(title, body);
     return true;
   }
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return false;
@@ -3517,8 +3550,8 @@ function modalExportIcs() {
     h('label', { class: 'row' }, h('span', {}, '日历名称'),
       h('input', { id: 'icsName', class: 'text-input', type: 'text', value: '课表 ' + parseTermCode(state.schedule?.termCode ?? '').label })),
     h('label', { class: 'row' }, h('span', {}, '上课提前提醒'), alarmOptions('icsAlarm', 15)),
-    h('label', { class: 'row' }, h('span', {}, '作业/网课截止提前提醒'), alarmOptions('icsTodoAlarm', 1440)),
-    h('label', { class: 'row' }, h('span', {}, `同时导出作业与截止（${openTodos.length} 条）`),
+    h('label', { class: 'row' }, h('span', {}, '待办事项截止提前提醒'), alarmOptions('icsTodoAlarm', 1440)),
+    h('label', { class: 'row' }, h('span', {}, `同时导出待办事项与截止（${openTodos.length} 条）`),
       h('input', { id: 'icsWithTodos', type: 'checkbox', checked: openTodos.length ? true : null })),
     h('p', { class: 'muted small' },
       `课程数：${events.length} 节。重复导入不会产生重复事件（UID 由课程身份决定，与教室、教师无关）。` +
@@ -3857,7 +3890,7 @@ function checkReminders() {
   const fire = (key, title, body) => {
     if (firedKeys.has(key)) return;
     firedKeys.add(key);
-    sendSystemNotification(title, body, key);
+    sendSystemNotification(title, body, key, true);
   };
 
   // 上课提醒
@@ -3868,21 +3901,26 @@ function checkReminders() {
       const [h2, m2] = e.start.split(':').map(Number);
       const diff = h2 * 60 + m2 - nowMin;
       if (diff < 0 || diff > alarm) continue;
-      fire(`${e.uid}@${today}`, `${alarm} 分钟后上课`, `${e.course}\n${e.start} ${e.location || ''}`);
+      fire(`class:${e.uid}:${alarm}`, `${alarm} 分钟后上课`, `${e.course}\n${e.start} ${e.location || ''}`);
     }
   }
 
-  // 作业 / 网课 / 考试截止提醒。
+  // 所有待办事项截止提醒。
   // 用绝对时刻算差值，所以「今晚 23:59 截止」这种当天最后一分钟也判得对。
   const lead = Number(state.settings.todoAlarm ?? 30);
-  if (lead > 0) {
+  if (lead > 0 || state.settings.todoAlarmEnabled) {
     for (const td of state.todos) {
       if (td.done || !td.due) continue;
+      const itemAlarm = !state.settings.todoAlarmEnabled && td.alarmEnabled;
+      const effectiveLead = state.settings.todoAlarmEnabled || !itemAlarm
+        ? lead
+        : Number(td.alarmMinutes) || 30;
+      if (effectiveLead <= 0) continue;
       const mins = todoRemindIn(td, now);
-      if (mins === null || mins < 0 || mins > lead) continue;
+      if (mins === null || mins < 0 || mins > effectiveLead) continue;
       const label = TODO_KINDS[td.kind]?.label ?? '待办';
       const when = mins >= 60 ? `${Math.round(mins / 60)} 小时后` : `${Math.max(1, Math.round(mins))} 分钟后`;
-      fire(`todo-${td.id}@${td.due}`, `${label}${when}截止`, `${td.title}\n${td.due.replace('T', ' ')}`);
+      fire(`todo:${td.id}:${td.due}:${effectiveLead}`, `${label}${when}截止`, `${td.title}\n${td.due.replace('T', ' ')}`);
     }
   }
 }
@@ -3934,8 +3972,68 @@ function bindSettings() {
     }
   }
 
-  $('setAlarm').addEventListener('change', (e) => { st().alarm = Number(e.target.value); saveState(); checkReminders(); });
-  $('setTodoAlarm').addEventListener('change', (e) => { st().todoAlarm = Number(e.target.value); saveState(); checkReminders(); });
+  const enableReminderNotifications = async () => {
+    const shell = globalThis.YangShanShell;
+    if (st().inApp) return true;
+    if (shell && typeof shell.requestNotifications === 'function') {
+      try {
+        await shell.requestNotifications();
+        st().inApp = true;
+        $('setInApp').checked = true;
+        saveState();
+        return true;
+      } catch {
+        toast('请在系统设置中允许仰山课表通知');
+        return false;
+      }
+    }
+    if (typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') {
+        toast('请允许系统通知后再启用提醒');
+        return false;
+      }
+    }
+    st().inApp = true;
+    $('setInApp').checked = true;
+    saveState();
+    return true;
+  };
+  $('setAlarm').addEventListener('change', async (e) => {
+    const value = Number(e.target.value);
+    if (value > 0 && !(await enableReminderNotifications())) {
+      e.target.value = String(st().alarm || 0);
+      return;
+    }
+    st().alarm = value;
+    saveState();
+    checkReminders();
+  });
+  $('setTodoAlarm').addEventListener('change', async (e) => {
+    const value = Number(e.target.value);
+    if (value > 0 && !(await enableReminderNotifications())) {
+      e.target.value = String(st().todoAlarm || 0);
+      return;
+    }
+    st().todoAlarm = value;
+    saveState();
+    checkReminders();
+  });
+  const bindAlarmMode = (id, key, label) => {
+    const input = $(id);
+    if (!input) return;
+    input.addEventListener('change', async (e) => {
+      if (e.target.checked && !(await enableReminderNotifications())) {
+        e.target.checked = false;
+        return;
+      }
+      st()[key] = e.target.checked;
+      saveState();
+      toast(e.target.checked ? `${label}已启用` : `${label}已关闭`);
+    });
+  };
+  bindAlarmMode('setCourseAlarm', 'courseAlarmEnabled', '课程闹钟');
+  bindAlarmMode('setTodoAlarmClock', 'todoAlarmEnabled', '全部待办闹钟');
   $('setInApp').addEventListener('change', async (e) => {
     const shell = globalThis.YangShanShell;
     if (e.target.checked && shell && typeof shell.requestNotifications === 'function') {
@@ -4124,6 +4222,8 @@ function bindSettings() {
   // 把设置回填到控件
   $('setAlarm').value = String(st().alarm);
   $('setTodoAlarm').value = String(st().todoAlarm ?? 30);
+  $('setCourseAlarm').checked = Boolean(st().courseAlarmEnabled);
+  $('setTodoAlarmClock').checked = Boolean(st().todoAlarmEnabled);
   $('setInApp').checked = st().inApp;
   $('setTheme').value = st().theme;
   $('setFont').value = String(st().font);

@@ -30,11 +30,13 @@ object ReminderScheduler {
         val at: Long,
         val title: String,
         val body: String,
+        val alarm: Boolean,
     )
 
     fun schedule(ctx: Context, json: String?) {
         val app = ctx.applicationContext
         val alarm = app.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        Notify.prepareReminderChannel(app)
         val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val old = prefs.getStringSet(KEY_IDS, emptySet()).orEmpty()
         old.forEach { cancelOne(app, alarm, it) }
@@ -45,7 +47,14 @@ object ReminderScheduler {
             val requestCode = requestCode(item.key)
             val pending = pendingIntent(app, item, requestCode)
             try {
-                if (Build.VERSION.SDK_INT >= 31 && alarm.canScheduleExactAlarms()) {
+                if (item.alarm && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    // “闹钟提醒”使用系统 AlarmClock 通道，系统会把它当作真正的闹钟
+                    // 处理；普通提醒仍使用精确闹钟唤醒后发通知，不占用闹钟入口。
+                    alarm.setAlarmClock(
+                        AlarmManager.AlarmClockInfo(item.at, alarmShowIntent(app, requestCode)),
+                        pending,
+                    )
+                } else if (Build.VERSION.SDK_INT >= 31 && alarm.canScheduleExactAlarms()) {
                     alarm.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, item.at, pending)
                 } else {
                     // 没有“精确闹钟”特殊权限时仍然安排提醒，系统会在省电策略允许时唤醒。
@@ -68,10 +77,11 @@ object ReminderScheduler {
         return runCatching {
             val root = JSONObject(json)
             val settings = root.optJSONObject("settings") ?: JSONObject()
-            if (!settings.optBoolean("inApp", false)) return emptyList()
             val out = ArrayList<Reminder>()
             val alarmMinutes = settings.optInt("alarm", 0).coerceAtLeast(0)
             val todoMinutes = settings.optInt("todoAlarm", 0).coerceAtLeast(0)
+            val courseAlarmEnabled = settings.optBoolean("courseAlarmEnabled", false)
+            val todoAlarmEnabled = settings.optBoolean("todoAlarmEnabled", false)
 
             val schedule = root.optJSONObject("schedule")
             val events = schedule?.optJSONArray("events") ?: JSONArray()
@@ -88,6 +98,7 @@ object ReminderScheduler {
                     key = "class:$uid:$alarmMinutes",
                     at = at,
                     title = "$alarmMinutes 分钟后上课",
+                    alarm = courseAlarmEnabled,
                     body = listOf(
                         e.optString("course"),
                         "$start ${e.optString("location")}".trim(),
@@ -98,27 +109,41 @@ object ReminderScheduler {
             val todos = root.optJSONArray("todos") ?: JSONArray()
             for (i in 0 until todos.length()) {
                 val td = todos.optJSONObject(i) ?: continue
-                if (td.optBoolean("done", false) || todoMinutes <= 0) continue
-                val due = td.optString("due")
-                val at = parseTime(due.substringBefore('T'), due.substringAfter('T').take(5))
-                    ?.minusMinutes(todoMinutes.toLong())
+                if (td.optBoolean("done", false)) continue
+                val itemAlarmEnabled = td.optBoolean("alarmEnabled", false)
+                val leadMinutes = if (todoAlarmEnabled) {
+                    todoMinutes
+                } else if (itemAlarmEnabled) {
+                    td.optInt("alarmMinutes", todoMinutes).coerceAtLeast(0)
+                } else {
+                    todoMinutes
+                }
+                if (leadMinutes <= 0) continue
+                val due = td.optString("due").trim()
+                val at = parseFlexibleTime(due)
+                    ?.minusMinutes(leadMinutes.toLong())
                     ?.toEpochMillis() ?: continue
                 val kind = when (td.optString("kind")) {
                     "homework" -> "作业"
                     "online" -> "网课"
                     "exam" -> "考试"
+                    "meeting" -> "会议"
+                    "experiment" -> "实验"
+                    "competition" -> "竞赛"
+                    "activity" -> "活动"
                     else -> "待办"
                 }
                 val id = td.optString("id").ifBlank { "$due|$i" }
-                val whenText = if (todoMinutes >= 60) {
-                    "${todoMinutes / 60} 小时后"
+                val whenText = if (leadMinutes >= 60) {
+                    "${leadMinutes / 60} 小时后"
                 } else {
-                    "$todoMinutes 分钟后"
+                    "$leadMinutes 分钟后"
                 }
                 out += Reminder(
-                    key = "todo:$id:$due:$todoMinutes",
+                    key = "todo:$id:$due:$leadMinutes",
                     at = at,
                     title = "$kind${whenText}截止",
+                    alarm = todoAlarmEnabled || itemAlarmEnabled,
                     body = "${td.optString("title").ifBlank { kind }}\n$due".trim(),
                 )
             }
@@ -127,7 +152,28 @@ object ReminderScheduler {
     }
 
     private fun parseTime(date: String, time: String): LocalDateTime? =
-        runCatching { LocalDateTime.parse("${date}T${time}") }.getOrNull()
+        runCatching {
+            val normalizedDate = date.trim()
+            val normalizedTime = time.trim().let {
+                when {
+                    it.matches(Regex("""\d{1,2}:\d{2}""")) -> it.padStart(5, '0')
+                    it.length >= 5 -> it.take(5)
+                    else -> return@runCatching null
+                }
+            }
+            LocalDateTime.parse("${normalizedDate}T$normalizedTime")
+        }.getOrNull()
+
+    /** 兼容网页输入框、通知文本和 ISO 字符串的几种截止时间写法。 */
+    private fun parseFlexibleTime(raw: String): LocalDateTime? {
+        val value = raw.trim()
+            .replace(' ', 'T')
+            .replace(Regex("""([+-]\d{2}:\d{2}|Z)$"""), "")
+        runCatching { LocalDateTime.parse(value) }.getOrNull()?.let { return it }
+        val date = value.substringBefore('T', "")
+        val time = value.substringAfter('T', "")
+        return parseTime(date, time)
+    }
 
     private fun LocalDateTime.toEpochMillis(): Long =
         atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
@@ -148,8 +194,17 @@ object ReminderScheduler {
         )
     }
 
+    private fun alarmShowIntent(ctx: Context, requestCode: Int): PendingIntent =
+        PendingIntent.getActivity(
+            ctx,
+            requestCode,
+            Intent(ctx, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+
     private fun cancelOne(ctx: Context, alarm: AlarmManager, key: String) {
-        val item = Reminder(key, 0L, "", "")
+        val item = Reminder(key, 0L, "", "", false)
         alarm.cancel(pendingIntent(ctx, item, requestCode(key)))
     }
 
@@ -163,8 +218,11 @@ class ReminderReceiver : android.content.BroadcastReceiver() {
         val ctx = context?.applicationContext ?: return
         val title = ReminderScheduler.title(intent ?: return)
         val body = ReminderScheduler.body(intent ?: return)
-        if (title.isNotBlank() && Notify.notificationsEnabled(ctx)) {
-            Notify.show(ctx, title, body, ReminderScheduler.key(intent))
+        // 不在这里提前判断通知权限：系统设置页可能刚刚授予权限，而
+        // areNotificationsEnabled() 在部分厂商 ROM 上仍会短暂返回旧值。
+        // 直接尝试发送，Notify.post 会处理真正的 SecurityException。
+        if (title.isNotBlank()) {
+            Notify.showReminder(ctx, title, body, ReminderScheduler.key(intent))
         }
         // 重新读取最新状态，覆盖用户刚删除/完成/改期的提醒。
         ReminderScheduler.rescheduleFromStore(ctx)

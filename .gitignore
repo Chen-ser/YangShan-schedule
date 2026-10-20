@@ -60,3 +60,8 @@ shells/android/**/*.aab
 # ── OCR 资产：本地跑 tools/fetch-ocr.mjs 生成，仓库决定提交（见 README）────
 # 若不提交，把下面这行取消注释即可。
 # vendor/ocr/
+
+# ── 本地构建用的家目录 / 临时目录（沙箱里把 HOME、TEMP 重定向到工程内）────
+shells/android/.android-build-home/
+shells/windows/.appdata/
+shells/windows/.tmp/

@@ -1,4 +1,4 @@
-// 本地数据模型 —— 课表数据包校验、分享码、待办（作业/网课）、公告、备份。
+// 本地数据模型 —— 课表数据包校验、分享码、待办事项、公告、备份。
 //
 // 与 core/schedule.mjs 一样：零依赖、零 DOM、**不许出现 Node 专有 API**。
 // 只用 TextEncoder / TextDecoder / btoa / atob 这些 Web 标准（Node 16+ 也有）。
@@ -223,6 +223,10 @@ export const TODO_KINDS = Object.freeze({
   homework: { label: '作业', color: '#e8734a' },
   online: { label: '网课', color: '#4a8fe8' },
   exam: { label: '考试', color: '#d94a6a' },
+  meeting: { label: '会议', color: '#8b6fe8' },
+  experiment: { label: '实验', color: '#2f9e8f' },
+  competition: { label: '竞赛', color: '#d08a2e' },
+  activity: { label: '活动', color: '#c45c9c' },
   other: { label: '其他', color: '#8a8a8a' },
 });
 
@@ -238,6 +242,7 @@ function normDue(due) {
 /** 新增或按 id 更新一条待办，返回按截止时间升序的新数组（不改原数组）。 */
 export function upsertTodo(list, todo) {
   const arr = Array.isArray(list) ? list.slice() : [];
+  const existing = arr.find((x) => x.id === todo.id);
   const item = {
     id: todo.id || `t-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
     title: String(todo.title ?? '').trim() || '未命名',
@@ -245,6 +250,11 @@ export function upsertTodo(list, todo) {
     kind: TODO_KINDS[todo.kind] ? todo.kind : 'other',
     note: todo.note ?? '',
     done: Boolean(todo.done),
+    alarmEnabled: Boolean(todo.alarmEnabled ?? existing?.alarmEnabled),
+    alarmMinutes: Number.isFinite(Number(todo.alarmMinutes ?? existing?.alarmMinutes)) &&
+      Number(todo.alarmMinutes ?? existing?.alarmMinutes) >= 0
+      ? Number(todo.alarmMinutes ?? existing?.alarmMinutes)
+      : 30,
     createdAt: todo.createdAt ?? new Date().toISOString(),
   };
   const i = arr.findIndex((x) => x.id === item.id);
@@ -539,7 +549,11 @@ export function miniMarkdown(src) {
 
 const KIND_RULES = [
   [/网课|在线|视频|慕课|mooc|学习通|雨课堂/i, 'online'],
-  [/作业|习题|报告|论文|实验/i, 'homework'],
+  [/会议|例会|答辩会|座谈会/i, 'meeting'],
+  [/竞赛|比赛|大赛|挑战赛/i, 'competition'],
+  [/活动|讲座|社团|志愿|迎新|实践活动/i, 'activity'],
+  [/实验|实验报告|实验课|实验室/i, 'experiment'],
+  [/作业|习题|报告|论文/i, 'homework'],
   [/考试|测验|测评|补考|重修/i, 'exam'],
 ];
 

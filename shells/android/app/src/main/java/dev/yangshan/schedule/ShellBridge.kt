@@ -23,6 +23,7 @@ class ShellBridge(private val host: Host) {
         fun onStatus(id: String)
         fun onForget(id: String)
         fun onNotify(title: String?, body: String?)
+        fun onNotifyReminder(title: String?, body: String?, tag: String?)
         fun onRequestNotifications(id: String)
         fun onRequestBackgroundAccess(id: String)
         fun onOpenAppSettings(id: String)
@@ -49,6 +50,11 @@ class ShellBridge(private val host: Host) {
             "status" -> host.onStatus(id)
             "forget" -> host.onForget(id)
             "notify" -> host.onNotify(m.stringOrNull("title"), m.stringOrNull("body"))
+            "notifyReminder" -> host.onNotifyReminder(
+                m.stringOrNull("title"),
+                m.stringOrNull("body"),
+                m.stringOrNull("tag"),
+            )
             "requestNotifications" -> host.onRequestNotifications(id)
             "requestBackgroundAccess" -> host.onRequestBackgroundAccess(id)
             "openAppSettings" -> host.onOpenAppSettings(id)

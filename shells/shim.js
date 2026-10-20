@@ -5,7 +5,7 @@
  *   globalThis.YangShanShell = {
  *     name: 'windows' | 'android', version: 1,
  *     login(username, password), refresh(), status(), forget(),
- *     notify(title, body), requestBackgroundAccess(), openAppSettings(),
+ *     notify(title, body), notifyReminder(title, body, tag), requestBackgroundAccess(), openAppSettings(),
  *     persistState(json, updatedAt),
  *     openExternal(url)
  *   }
@@ -76,6 +76,9 @@
     status: function () { return call('status'); },
     forget: function () { return call('forget'); },
     notify: function (title, body) { post({ cmd: 'notify', title: title, body: body }); },
+    notifyReminder: function (title, body, tag) {
+      post({ cmd: 'notifyReminder', title: title, body: body, tag: tag || '' });
+    },
     requestNotifications: function () { return call('requestNotifications'); },
     requestBackgroundAccess: function () { return call('requestBackgroundAccess'); },
     openAppSettings: function () { return call('openAppSettings'); },

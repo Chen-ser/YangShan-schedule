@@ -38,6 +38,13 @@ $node = Find-Node
 Write-Host "node : $node"
 Write-Host "repo : $repo"
 
+$localDotnet = Join-Path $here '.dotnet\dotnet.exe'
+$dotnet = if (Test-Path -LiteralPath $localDotnet) { $localDotnet } else { 'dotnet' }
+if ($dotnet -eq 'dotnet' -and -not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
+  throw 'dotnet.exe not found. Run ..\..\tools\install-build-deps.ps1 first.'
+}
+Write-Host "dotnet: $dotnet"
+
 # ---- 1. web build -----------------------------------------------------------
 Step 1 'building the schedule core (web/build.mjs)'
 Push-Location $repo
@@ -71,7 +78,7 @@ $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
 
 Push-Location $here
 try {
-    & dotnet build -c Release --nologo
+    & $dotnet build -c Release --nologo
     if ($LASTEXITCODE -ne 0) { throw "dotnet build failed with exit code $LASTEXITCODE" }
 } finally { Pop-Location }
 

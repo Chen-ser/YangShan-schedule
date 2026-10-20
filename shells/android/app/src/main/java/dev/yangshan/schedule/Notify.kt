@@ -14,8 +14,9 @@ import androidx.core.content.ContextCompat
  * 系统通知。全部集中在这里，因为渠道（NotificationChannel）必须与通知一起考虑：
  * 安卓 8 起，一条通知属于哪个渠道就决定了它响不响、能不能被单独静音。
  *
- * 三条渠道，**刻意分开**：
+ * 四条渠道，**刻意分开**：
  *   - `yangshan`      课表已更新（后台抓完提示一声）
+ *   - `yangshan-reminder` 课前/待办截止提醒（必须可见、可单独设置）
  *   - `yangshan-ann`  新公告（管理员发的，用户想第一时间看到）
  *   - `yangshan-push` 推送服务的常驻通知（必须存在但**不该打扰人** → IMPORTANCE_MIN）
  *
@@ -25,6 +26,7 @@ import androidx.core.content.ContextCompat
 object Notify {
 
     private const val CH_SCHEDULE = "yangshan"
+    private const val CH_REMINDER = "yangshan-reminder"
     private const val CH_ANN = "yangshan-ann"
     private const val CH_PUSH = "yangshan-push"
 
@@ -48,8 +50,21 @@ object Notify {
     private fun channel(ctx: Context, id: String, name: String, importance: Int) {
         val nm = manager(ctx)
         if (nm.getNotificationChannel(id) == null) {
-            nm.createNotificationChannel(NotificationChannel(id, name, importance))
+            val channel = NotificationChannel(id, name, importance)
+            channel.enableVibration(true)
+            channel.setSound(
+                android.provider.Settings.System.DEFAULT_NOTIFICATION_URI,
+                android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+                    .build(),
+            )
+            nm.createNotificationChannel(channel)
         }
+    }
+
+    /** 提醒闹钟排好时就先创建渠道，避免首次到点时渠道状态还未初始化。 */
+    fun prepareReminderChannel(ctx: Context) {
+        channel(ctx, CH_REMINDER, "课前与待办提醒", NotificationManager.IMPORTANCE_HIGH)
     }
 
     private fun openApp(ctx: Context): PendingIntent = PendingIntent.getActivity(
@@ -82,6 +97,28 @@ object Notify {
             .build()
 
         val id = key?.let { 6000 + (it.hashCode() and 0x7fffffff) % 1000 } ?: ID_SCHEDULE
+        post(ctx, id, n)
+    }
+
+    /** 课前与待办截止提醒，使用独立高重要性渠道，避免被后台更新通知的静音设置吞掉。 */
+    fun showReminder(ctx: Context, title: String, body: String, key: String? = null) {
+        channel(ctx, CH_REMINDER, "课前与待办提醒", NotificationManager.IMPORTANCE_HIGH)
+
+        @Suppress("DEPRECATION")
+        val n = Notification.Builder(ctx, CH_REMINDER)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(Notification.BigTextStyle().bigText(body))
+            .setContentIntent(openApp(ctx))
+            .setAutoCancel(true)
+            .setPriority(Notification.PRIORITY_HIGH)
+            .setDefaults(Notification.DEFAULT_ALL)
+            .setCategory(Notification.CATEGORY_REMINDER)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
+            .build()
+
+        val id = key?.let { 7000 + (it.hashCode() and 0x7fffffff) % 1000 } ?: 7000
         post(ctx, id, n)
     }
 

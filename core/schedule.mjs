@@ -515,7 +515,7 @@ export function buildIcal(events, opts = {}) {
   const alarm = Number.isFinite(opts.alarmMinutes) ? opts.alarmMinutes : null;
 
   for (const e of events ?? []) {
-    // 待办（作业/网课/考试截止）走另一套文案：它们没有教师、教室、节次，
+    // 待办事项截止事件走另一套文案：它们没有教师、教室、节次，
     // 硬套课程模板会往日历里塞一堆"教师: 未知 / 节次: 0-0节"。
     const isTodo = e.kind === 'todo';
     const desc = isTodo

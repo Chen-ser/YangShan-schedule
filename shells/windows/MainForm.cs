@@ -231,6 +231,13 @@ internal sealed class MainForm : Form
                     _tray.ShowBalloonTip(6000, title ?? "仰山课表", body ?? "", ToolTipIcon.Info);
                     break;
                 }
+                case "notifyReminder":
+                {
+                    var title = root.TryGetProperty("title", out var t) ? t.GetString() : "仰山课表提醒";
+                    var body = root.TryGetProperty("body", out var b) ? b.GetString() : "";
+                    _tray.ShowBalloonTip(6000, title ?? "仰山课表提醒", body ?? "", ToolTipIcon.Info);
+                    break;
+                }
                 case "requestNotifications":
                     // Windows notifications use the tray balloon and need no runtime permission.
                     Reply(id, true, "{\"granted\":true}", null);

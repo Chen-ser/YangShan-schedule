@@ -451,9 +451,14 @@ class MainActivity : Activity(), ShellBridge.Host {
         runOnUiThread { Notify.show(this, title ?: "仰山课表", body.orEmpty()) }
     }
 
+    override fun onNotifyReminder(title: String?, body: String?, tag: String?) {
+        runOnUiThread { Notify.showReminder(this, title ?: "仰山课表提醒", body.orEmpty(), tag) }
+    }
+
     override fun onRequestNotifications(id: String) {
         runOnUiThread {
             if (Notify.notificationsEnabled(this)) {
+                ReminderScheduler.rescheduleFromStore(this)
                 reply(JSONObject().put("id", id).put("ok", true).put("pack", JSONObject().put("granted", true)))
                 return@runOnUiThread
             }
@@ -633,6 +638,7 @@ class MainActivity : Activity(), ShellBridge.Host {
             pendingNotifyId = null
             if (granted) {
                 AnnPush.apply(this)
+                ReminderScheduler.rescheduleFromStore(this)
                 reply(JSONObject().put("id", id).put("ok", true).put("pack", JSONObject().put("granted", true)))
             } else {
                 reply(JSONObject().put("id", id).put("ok", false).put("error", "请在系统设置中允许仰山课表通知。"))

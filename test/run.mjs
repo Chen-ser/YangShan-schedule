@@ -541,7 +541,62 @@ t('课前和待办截止提醒必须支持安卓原生通知', () => {
   ok(app.includes('const alarm = Number(state.settings.alarm)'), '必须检查上课提前提醒设置');
   ok(app.includes('const lead = Number(state.settings.todoAlarm'), '必须检查待办截止提醒设置');
   ok(main.includes('override fun onNotify'), '安卓壳必须接收网页提醒');
+  ok(main.includes('override fun onNotifyReminder'), '安卓壳必须接收专用课前/待办提醒');
+  ok(main.includes('tag: String?'), '安卓提醒必须保留前后台共用的去重标识');
   ok(main.includes('Notify.show(this'), '安卓壳必须把网页提醒发到系统通知栏');
+  const scheduler = readFileSync(
+    join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/ReminderScheduler.kt'),
+    'utf8',
+  );
+  const notify = readFileSync(
+    join(ROOT, 'shells/android/app/src/main/java/dev/yangshan/schedule/Notify.kt'),
+    'utf8',
+  );
+  ok(!scheduler.includes('optBoolean("inApp", false)'), '安卓后台闹钟不能被旧的应用内开关静默跳过');
+  ok(scheduler.includes('Notify.showReminder'), '后台闹钟必须使用专用提醒通知');
+  ok(notify.includes('CH_REMINDER') && notify.includes('IMPORTANCE_HIGH'), '课前和待办提醒必须使用高重要性独立渠道');
+  ok(scheduler.includes('Notify.prepareReminderChannel'), '排闹钟时必须预创建提醒通知渠道');
+  ok(!scheduler.includes('Notify.notificationsEnabled(ctx)'), '闹钟到点不能因权限状态瞬时旧值直接静默丢弃');
+  ok(app.includes('enableReminderNotifications'), '修改提前量时必须确保系统通知已启用');
+  ok(app.includes('shell.notifyReminder(title, body, tag)'), '前台课前/待办提醒必须走专用通知渠道');
+  ok(app.includes('class:${e.uid}:${alarm}'), '网页课前提醒与后台闹钟必须共享去重标识');
+  ok(app.includes('todo:${td.id}:${td.due}:${effectiveLead}'), '网页待办提醒与后台闹钟必须共享去重标识');
+  ok(app.includes('td.alarmEnabled') && app.includes('td.alarmMinutes'), '前台待办提醒必须使用单条闹钟提前量');
+  ok(app.includes('courseAlarmEnabled') && app.includes('todoAlarmEnabled'), '提醒设置必须保存课程与全部待办闹钟开关');
+  ok(scheduler.includes('courseAlarmEnabled') && scheduler.includes('todoAlarmEnabled'), '安卓调度必须读取全局闹钟开关');
+  ok(scheduler.includes('alarmEnabled') && scheduler.includes('alarmMinutes'), '安卓调度必须读取单条待办闹钟配置');
+});
+
+t('待办编辑支持单条闹钟提醒且默认关闭', () => {
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  const model = readFileSync(join(ROOT, 'core/model.mjs'), 'utf8');
+  const template = readFileSync(join(ROOT, 'web/template.html'), 'utf8');
+  ok(app.includes('id: \'etAlarmEnabled\''), '待办编辑必须有单条闹钟开关');
+  ok(app.includes('id: \'etAlarmMinutes\''), '启用单条闹钟后必须可设置提前时间');
+  ok(model.includes('alarmEnabled: Boolean(todo.alarmEnabled ?? existing?.alarmEnabled)'), '待办模型必须默认关闭单条闹钟并保留既有配置');
+  ok(template.includes('id="setCourseAlarm"'), '设置必须有课程闹钟开关');
+  ok(template.includes('id="setTodoAlarmClock"'), '设置必须有全部待办闹钟开关');
+});
+
+t('待办部分更新不会清除既有闹钟配置', () => {
+  const original = [{ id: 'todo-1', title: '实验报告', kind: 'experiment', due: '2026-10-20T18:00', alarmEnabled: true, alarmMinutes: 10 }];
+  const updated = M.upsertTodo(original, { id: 'todo-1', title: '实验报告（修改）', kind: 'experiment', due: '2026-10-20T19:00' });
+  eq(updated[0].alarmEnabled, true);
+  eq(updated[0].alarmMinutes, 10);
+});
+
+t('待办事项包含完整类型集合并同步解析与助手提示词', () => {
+  const model = readFileSync(join(ROOT, 'core/model.mjs'), 'utf8');
+  const app = readFileSync(join(ROOT, 'web/app.js'), 'utf8');
+  const template = readFileSync(join(ROOT, 'web/template.html'), 'utf8');
+  for (const label of ['meeting', 'experiment', 'competition', 'activity']) {
+    ok(model.includes(`${label}:`), `模型必须支持 ${label} 类型`);
+  }
+  ok(model.includes("'会议'") && model.includes("'实验'") && model.includes("'竞赛'") && model.includes("'活动'"),
+    '通知文本解析必须识别新增待办类型');
+  ok(app.includes('meeting|experiment|competition|activity|other'), '助手提示词必须允许新增待办类型');
+  ok(template.includes('<h2>待办事项</h2>'), '待办分区标题必须改为待办事项');
+  ok(template.includes('<span>待办事项截止前提醒</span>'), '提醒设置文案必须改为待办事项截止前提醒');
 });
 
 t('推送载荷一律不可信：通知正文只能来自公告 JSON', () => {
@@ -1310,6 +1365,19 @@ t('model: 待办（作业/网课）增删与排序', () => {
   const list3 = M.upsertTodo(list2, { id: 'a', title: '高数作业（改）', due: '2025-09-10T23:59', kind: 'homework' });
   eq(list3.length, 2, '同一 id 应更新而非追加');
   eq(M.removeTodo(list3, 'a').length, 1);
+});
+
+t('model: 新增待办类型可被通知文本识别', () => {
+  const cases = [
+    ['会议通知 2025-09-10 10:00', 'meeting'],
+    ['实验报告 2025-09-11 23:59', 'experiment'],
+    ['竞赛报名 2025-09-12 18:00', 'competition'],
+    ['社团活动 2025-09-13 12:00', 'activity'],
+  ];
+  for (const [text, kind] of cases) {
+    const found = M.parseNoticeText(text);
+    eq(found[0]?.kind, kind, `${text} 应识别为 ${kind}`);
+  }
 });
 
 t('model: 未读公告计数', () => {

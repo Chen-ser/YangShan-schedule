@@ -27,6 +27,10 @@ const SKIP_DIRS = new Set([
   join('shells', 'android', '.gradle'), join('shells', 'android', 'build'),
   join('shells', 'android', '.gradle-build-home'), join('shells', 'android', '.kotlin'),
   join('shells', 'android', 'app', 'build'),
+  // 沙箱构建时把 HOME / APPDATA / TEMP 重定向到工程内，里面是 SDK 仓库索引与 NuGet 缓存，
+  // 不是本项目的文本（SDK 元数据里的手机号是 adb 设备串号样例，会误报）。
+  join('shells', 'android', '.android-build-home'),
+  join('shells', 'windows', '.appdata'), join('shells', 'windows', '.tmp'),
 ]);
 const SKIP_FILE_RE = /(\.local\.json|\.log|\.apk|\.aab)$/i;
 const BINARY_RE = /\.(wasm|png|jpg|jpeg|gif|ico|gz|zip|nupkg|exe|dll|pdb|woff2?)$/i;
