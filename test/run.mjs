@@ -563,6 +563,10 @@ t('课前和待办截止提醒必须支持安卓原生通知', () => {
   ok(manifest.includes('USE_FULL_SCREEN_INTENT') && manifest.includes('ReminderActivity'), '提醒必须声明锁屏全屏入口');
   ok(notify.includes('setFullScreenIntent(openReminder(ctx, title, body, key), true)'), '提醒必须设置全屏弹出入口');
   ok(reminderActivity.includes('setShowWhenLocked') && reminderActivity.includes('setTurnScreenOn'), '锁屏提醒页必须允许显示并点亮屏幕');
+  ok(main.includes('Notify.prepareReminderChannel(this)'), '首次安装必须先创建高重要性提醒频道');
+  ok(main.includes('canUseFullScreenIntent') &&
+    main.includes('ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT'),
+    'Android 14 首次启动必须引导用户允许全屏通知');
   ok(scheduler.includes('Notify.prepareReminderChannel'), '排闹钟时必须预创建提醒通知渠道');
   ok(!scheduler.includes('Notify.notificationsEnabled(ctx)'), '闹钟到点不能因权限状态瞬时旧值直接静默丢弃');
   ok(app.includes('enableReminderNotifications'), '修改提前量时必须确保系统通知已启用');

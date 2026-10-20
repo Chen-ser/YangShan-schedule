@@ -1,6 +1,7 @@
 package dev.yangshan.schedule
 
 import android.app.Activity
+import android.app.NotificationManager
 import android.content.BroadcastReceiver
 import android.content.IntentFilter
 import android.content.Intent
@@ -61,6 +62,7 @@ class MainActivity : Activity(), ShellBridge.Host {
     private var pendingId: String? = null
     private var pendingNotifyId: String? = null
     private var initialPermissionFlow = false
+    private var initialFullScreenSettingsOpened = false
     private val persistLock = Any()
     private var persistEpoch = 0L
     private var latestPersistAt = 0L
@@ -341,6 +343,12 @@ class MainActivity : Activity(), ShellBridge.Host {
         // 前台时网页端自己会弹通知（点了还能直接跳到那条公告），
         // 告诉服务别重复弹。
         AnnPush.appVisible = true
+        // Android 14 的全屏通知授权在独立系统页面里完成；返回后继续
+        // 首次安装引导，不把电池优化设置漏掉。
+        if (initialPermissionFlow && initialFullScreenSettingsOpened) {
+            initialFullScreenSettingsOpened = false
+            openInitialBackgroundAccess()
+        }
     }
 
     override fun onPause() {
@@ -591,14 +599,38 @@ class MainActivity : Activity(), ShellBridge.Host {
         if (prefs.getBoolean(K_INITIAL_PROMPTED, false)) return
         prefs.edit().putBoolean(K_INITIAL_PROMPTED, true).apply()
         initialPermissionFlow = true
+        // 先创建高重要性频道。这样即使用户还没有课表/待办，
+        // 系统安装后的提醒频道也已经具备弹窗和锁屏显示能力。
+        Notify.prepareReminderChannel(this)
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
             android.content.pm.PackageManager.PERMISSION_GRANTED
         ) {
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFY)
         } else {
-            openInitialBackgroundAccess()
+            openInitialFullScreenAccess()
         }
+    }
+
+    private fun openInitialFullScreenAccess() {
+        if (!initialPermissionFlow) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            if (!manager.canUseFullScreenIntent()) {
+                try {
+                    initialFullScreenSettingsOpened = true
+                    startActivity(
+                        Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT)
+                            .setData(Uri.parse("package:$packageName")),
+                    )
+                    return
+                } catch (_: Exception) {
+                    // 部分厂商没有这个系统页面，继续走后台权限引导。
+                    initialFullScreenSettingsOpened = false
+                }
+            }
+        }
+        openInitialBackgroundAccess()
     }
 
     private fun openInitialBackgroundAccess() {
@@ -644,7 +676,7 @@ class MainActivity : Activity(), ShellBridge.Host {
                 reply(JSONObject().put("id", id).put("ok", false).put("error", "请在系统设置中允许仰山课表通知。"))
             }
         }
-        if (initialPermissionFlow) openInitialBackgroundAccess()
+        if (initialPermissionFlow) openInitialFullScreenAccess()
     }
 
     /**
