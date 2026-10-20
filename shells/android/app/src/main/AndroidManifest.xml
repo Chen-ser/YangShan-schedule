@@ -19,6 +19,7 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- 允许课前/截止提醒在应用关闭后由系统闹钟唤醒。无此特殊权限时会自动降级为省电闹钟。 -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <application
         android:allowBackup="false"
@@ -70,6 +71,15 @@
             android:exported="false"
             android:label="@string/school_title"
             android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".ReminderActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:theme="@style/Theme.YangShan.Reminder" />
 
         <!--
             公告推送。前台服务而不是 WorkManager：WorkManager 最快 15 分钟一轮，

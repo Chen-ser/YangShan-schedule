@@ -74,6 +74,21 @@ object Notify {
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 
+    private fun openReminder(ctx: Context, title: String, body: String, key: String?): PendingIntent {
+        val requestCode = 7200 + ((key ?: "$title|$body").hashCode() and 0x7fffffff) % 1000
+        val intent = Intent(ctx, ReminderActivity::class.java)
+            .putExtra(ReminderActivity.EXTRA_TITLE, title)
+            .putExtra(ReminderActivity.EXTRA_BODY, body)
+            .putExtra(ReminderActivity.EXTRA_KEY, key)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        return PendingIntent.getActivity(
+            ctx,
+            requestCode,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+    }
+
     private fun post(ctx: Context, id: Int, n: Notification) {
         try {
             manager(ctx).notify(id, n)
@@ -116,6 +131,7 @@ object Notify {
             .setDefaults(Notification.DEFAULT_ALL)
             .setCategory(Notification.CATEGORY_REMINDER)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
+            .setFullScreenIntent(openReminder(ctx, title, body, key), true)
             .build()
 
         val id = key?.let { 7000 + (it.hashCode() and 0x7fffffff) % 1000 } ?: 7000

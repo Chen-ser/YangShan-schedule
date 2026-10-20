@@ -8,4 +8,12 @@
         <item name="android:windowBackground">@android:color/white</item>
         <item name="android:colorAccent">#2563EB</item>
     </style>
+
+    <style name="Theme.YangShan.Reminder" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#F8FAFC</item>
+        <item name="android:colorAccent">#2563EB</item>
+        <item name="android:navigationBarColor">#0F172A</item>
+        <item name="android:statusBarColor">#0F172A</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
 </resources>
